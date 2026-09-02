@@ -1,0 +1,110 @@
+/* ================================================================
+   NavBtn — bouton overlay gamboy (pression au clic)
+   Langage visuel : border 2px + hard shadow + radius asymétrique
+   Couleurs branchées sur les variables de thème Zen (light/dark auto)
+   ================================================================ */
+
+#navbtn-wrap {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 2147483647;
+  pointer-events: none; /* ne bloque jamais la page en dessous */
+}
+
+#navbtn-wrap.navbtn-hidden {
+  display: none;
+}
+
+#navbtn {
+  pointer-events: auto;
+  cursor: pointer;
+  -moz-user-select: none;
+  user-select: none;
+
+  --navbtn-bg: var(--toolbar-bgcolor, #ffffff);
+  --navbtn-fg: var(--toolbar-color, #1b1b1b);
+
+  background: var(--navbtn-bg);
+  height: 52px;
+  min-width: 52px;
+  border-radius: 10px 50px 50px; /* radius signature */
+  border: solid 2px var(--navbtn-fg);
+  box-shadow: 0px 8px 0px 0px var(--navbtn-fg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 0 18px;
+  position: relative;
+  z-index: 12;
+
+  /* Descente claquante (50ms), remontée ressort (overshoot) */
+  transition:
+    box-shadow 0.18s cubic-bezier(0.2, 0.8, 0.3, 1.2),
+    transform 0.18s cubic-bezier(0.2, 0.8, 0.3, 1.2);
+}
+
+#navbtn:active {
+  box-shadow: 0px 2px 0px 0px var(--navbtn-fg);
+  transform: translateY(6px);
+  transition-duration: 0.05s;
+}
+
+/* ----------------------------------------------------------------
+   ◀◀ — icône rewind en pur CSS (clip-path, colorée via currentColor)
+   ---------------------------------------------------------------- */
+.navbtn-ff {
+  display: flex;
+  gap: 4px;
+  color: var(--navbtn-fg);
+}
+
+.navbtn-ff::before,
+.navbtn-ff::after {
+  content: '';
+  display: block;
+  width: 11px;
+  height: 15px;
+  background: currentColor;
+  clip-path: polygon(100% 0, 0 50%, 100% 100%);
+}
+
+/* ----------------------------------------------------------------
+   Favicon de l'onglet cible — feedback "où le prochain clic t'envoie"
+   ---------------------------------------------------------------- */
+.navbtn-fav {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  background-color: var(--navbtn-fg);
+  background-image: var(--navbtn-fav-img, none);
+  background-size: contain;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+/* Pas de favicon (ou option désactivée) → pastille neutre ◀◀ seul */
+.navbtn-fav.navbtn-nofav {
+  display: none;
+}
+
+/* ----------------------------------------------------------------
+   Shake — "rien à switcher" (déclenché par JS sur animationend cleanup)
+   ---------------------------------------------------------------- */
+@keyframes navbtn-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-4px);
+  }
+  75% {
+    transform: translateX(4px);
+  }
+}
+
+#navbtn.navbtn-shake {
+  animation: navbtn-shake 0.25s ease-in-out;
+}

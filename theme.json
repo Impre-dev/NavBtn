@@ -1,0 +1,18 @@
+{
+  "id": "navbtn",
+  "name": "NavBtn",
+  "description": "Bouton overlay gamboy — clic gauche : onglet précédent (MRU ping-pong), clic droit : switcher ctrlTab",
+  "author": "Impre",
+  "version": "1.0.0",
+  "js": true,
+  "scripts": {
+    "navbtn.uc.js": {
+      "name": "NavBtn",
+      "description": "Overlay button + MRU switching + ctrlTab switcher (absorbe OneForAll)",
+      "include": ["chrome://browser/content/browser.xhtml"]
+    }
+  },
+  "style": { "chrome": "chrome.css" },
+  "tags": ["Javascript"],
+  "fork": ["zen"]
+}

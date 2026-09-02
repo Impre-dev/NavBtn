@@ -1,0 +1,26 @@
+[
+  {
+    "property": "navbtn.offset",
+    "label": "📏 Distance du bord de la fenêtre (px)",
+    "type": "number",
+    "defaultValue": "24"
+  },
+  {
+    "property": "navbtn.size",
+    "label": "📐 Hauteur du bouton (px)",
+    "type": "number",
+    "defaultValue": "52"
+  },
+  {
+    "property": "navbtn.hideFullscreen",
+    "label": "Masquer en plein écran (vidéo, jeux…)",
+    "type": "checkbox",
+    "defaultValue": "true"
+  },
+  {
+    "property": "navbtn.showFavicon",
+    "label": "Afficher la favicon de l'onglet cible dans le bouton",
+    "type": "checkbox",
+    "defaultValue": "true"
+  }
+]
