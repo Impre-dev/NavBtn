@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name           NavBtn
-// @version        1.0.0
+// @version        1.1.0
 // @description    Bouton overlay gamboy — clic gauche: onglet précédent (MRU ping-pong) · clic droit: switcher ctrlTab
 // @author         Impre
 // @include        main
@@ -30,6 +30,41 @@
   };
 
   // ================================================================
+  // SON — key.wav en feedback de pression
+  // Chargé UNE fois au boot (IOUtils → data URI), zéro I/O au clic.
+  // play() dans le handler mousedown = user gesture → autoplay OK.
+  // ================================================================
+  let clickSound = null;
+
+  async function loadSound() {
+    try {
+      const path = PathUtils.join(
+        PathUtils.profileDir, 'chrome', 'sine-mods', 'navbtn', 'resources', 'key.wav',
+      );
+      if (!(await IOUtils.exists(path))) return;
+      const bytes = await IOUtils.read(path);
+      let binary = '';
+      const CHUNK = 0x8000;
+      for (let i = 0; i < bytes.length; i += CHUNK) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+      }
+      clickSound = new Audio('data:audio/wav;base64,' + btoa(binary));
+      clickSound.volume = 0.5;
+    } catch (e) {
+      console.warn('[NavBtn] Sound load failed:', e.message);
+    }
+  }
+
+  function playClick() {
+    if (!clickSound) return;
+    if (!pref.bool('navbtn.sound', true)) return;
+    try {
+      clickSound.currentTime = 0;
+      clickSound.play().catch(() => {});
+    } catch (_) {}
+  }
+
+  // ================================================================
   // INIT
   // ================================================================
   function init() {
@@ -43,6 +78,7 @@
     buildButton();
     watchTabs();
     portSwitcher();
+    loadSound();
 
     console.log('[NavBtn] v1.0.0 — bouton prêt, MRU armé');
   }
@@ -132,11 +168,12 @@
     wrap.style.right = offset + 'px';
     btn.style.height = size + 'px';
 
-    // Clic gauche → switch immédiat (pression ressentie pendant l'action)
+    // Clic gauche → switch immédiat (pression + son pendant l'action)
     btn.addEventListener('mousedown', (e) => {
       if (e.button !== 0) return;
       e.preventDefault();
       e.stopPropagation();
+      playClick();
       switchToPrevious();
     });
 

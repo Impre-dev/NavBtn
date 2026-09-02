@@ -6,7 +6,7 @@
 
 #navbtn-wrap {
   position: fixed;
-  bottom: 24px;
+  bottom: 30px;
   right: 24px;
   z-index: 2147483647;
   pointer-events: none; /* ne bloque jamais la page en dessous */
@@ -28,7 +28,7 @@
   background: var(--navbtn-bg);
   height: 52px;
   min-width: 52px;
-  border-radius: 10px 50px 50px; /* radius signature */
+  border-radius: 50px; /* radius signature */
   border: solid 2px var(--navbtn-fg);
   box-shadow: 0px 8px 0px 0px var(--navbtn-fg);
   display: inline-flex;

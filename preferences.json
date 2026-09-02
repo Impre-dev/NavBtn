@@ -22,5 +22,11 @@
     "label": "Afficher la favicon de l'onglet cible dans le bouton",
     "type": "checkbox",
     "defaultValue": "true"
+  },
+  {
+    "property": "navbtn.sound",
+    "label": "🔊 Son de pression du bouton (key.wav)",
+    "type": "checkbox",
+    "defaultValue": "true"
   }
 ]
