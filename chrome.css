@@ -56,12 +56,6 @@
     visibility 0.15s ease;
 }
 
-#navbtn:active {
-  box-shadow: 0px 2px 0px 0px var(--navbtn-fg);
-  transform: translateY(6px);
-  transition-duration: 0.05s;
-}
-
 /* ----------------------------------------------------------------
    Slash VS — séparateur façon écran de combat d'arcade
    [où tu es] / [où tu vas]
@@ -263,3 +257,35 @@
    nos propres overlays (#navbtn-ctrltab-blur-*, cf portBlur) avec leur
    radius inline — Nebula-Fork n'intervient plus sur ctrlTab
    (doctrine : plans/doctrine-mods.md). */
+
+/* ================================================================
+   PRESSION — règle volontairement EN FIN de feuille. Ne pas déplacer.
+   Les presets du labo (spécificité (2,2,0)) écrasent la transition de
+   #navbtn ((1,1,0)) : placée en tête de feuille, la règle :active
+   perdait le match et le press empruntait le timing d'ENTRÉE du
+   preset actif (steps(5) saccadé, ressort pop 0.4s…) → bouton et
+   socle animés ensembles, effet "flottant" au lieu d'un press net.
+   Ici : même spécificité que les presets, c'est l'ordre source qui
+   fait gagner. Valeurs d'origine v1.1.0/v1.3.2 (validées).
+   ================================================================ */
+#navbtn-wrap:not(.navbtn-notarget) #navbtn:active {
+  box-shadow: 0px 2px 0px 0px var(--navbtn-fg);
+  transform: translateY(6px);
+  transition:
+    box-shadow 0.05s ease,
+    transform 0.05s ease;
+}
+
+/* DÉPRESSION (remontée du press) — même mécanique que la pression :
+   doit gagner contre les presets (spécificité (2,3,0), ordre source).
+   Classe .navbtn-depress posée à pointerup, retirée à transitionend
+   (cf buildButton dans le .uc.js). Sans elle, la remontée emprunterait
+   la transition d'entrée du preset actif (steps(5), ressort pop…) au
+   lieu du ressort d'origine. */
+#navbtn-wrap:not(.navbtn-notarget) #navbtn.navbtn-depress {
+  transition:
+    box-shadow 0.18s cubic-bezier(0.2, 0.8, 0.3, 1.2),
+    transform 0.18s cubic-bezier(0.2, 0.8, 0.3, 1.2),
+    opacity 0.15s ease,
+    visibility 0.15s ease;
+}

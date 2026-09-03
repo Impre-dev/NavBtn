@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name           NavBtn
-// @version        1.4.6
+// @version        1.4.7
 // @description    Bouton overlay gamboy — clic gauche: onglet précédent (MRU ping-pong) · clic droit: switcher ctrlTab
 // @author         Impre
 // @include        main
@@ -112,7 +112,7 @@
       },
     });
 
-    console.log('[NavBtn] v1.4.6 — bouton prêt, MRU armé au SSWindowRestored');
+    console.log('[NavBtn] v1.4.7 — bouton prêt, MRU armé au SSWindowRestored');
   }
 
   // ================================================================
@@ -263,6 +263,22 @@
       if (e.button === 1) {
         e.preventDefault();
         e.stopPropagation();
+      }
+    });
+
+    // Dépression : au relâchement, la transition vers l'état de repos
+    // est celle de l'état VISIBLE = celle du preset actif (entrées
+    // steps/ressort…) → remontée molle ou saccadée. CSS pur ne peut pas
+    // distinguer "arrive de caché" (entrée preset) de "arrive de pressé"
+    // (dépression) sur un même état → classe dédiée posée à pointerup,
+    // retirée à transitionend. Elle porte le ressort d'origine (règle
+    // .navbtn-depress en fin de chrome.css). Retrait aussi au pointerdown
+    // pour ne jamais fuiter sur l'entrée d'un preset.
+    btn.addEventListener('pointerdown', () => btn.classList.remove('navbtn-depress'));
+    btn.addEventListener('pointerup', () => btn.classList.add('navbtn-depress'));
+    btn.addEventListener('transitionend', (ev) => {
+      if (ev.target === btn && ev.propertyName === 'transform') {
+        btn.classList.remove('navbtn-depress');
       }
     });
 
