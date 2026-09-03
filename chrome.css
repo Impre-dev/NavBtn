@@ -16,6 +16,14 @@
   display: none;
 }
 
+/* Aucun aller-retour possible → invisible (fade doux, pas display:none
+   pour ne pas tuer la transition) */
+#navbtn-wrap.navbtn-notarget #navbtn {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
 #navbtn {
   pointer-events: auto;
   cursor: pointer;
@@ -39,10 +47,13 @@
   position: relative;
   z-index: 12;
 
-  /* Descente claquante (50ms), remontée ressort (overshoot) */
+  /* Descente claquante (50ms), remontée ressort (overshoot)
+     + fade pour l'auto-hide */
   transition:
     box-shadow 0.18s cubic-bezier(0.2, 0.8, 0.3, 1.2),
-    transform 0.18s cubic-bezier(0.2, 0.8, 0.3, 1.2);
+    transform 0.18s cubic-bezier(0.2, 0.8, 0.3, 1.2),
+    opacity 0.15s ease,
+    visibility 0.15s ease;
 }
 
 #navbtn:active {

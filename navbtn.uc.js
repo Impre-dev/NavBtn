@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name           NavBtn
-// @version        1.1.0
+// @version        1.2.0
 // @description    Bouton overlay gamboy — clic gauche: onglet précédent (MRU ping-pong) · clic droit: switcher ctrlTab
 // @author         Impre
 // @include        main
@@ -140,10 +140,12 @@
   // ================================================================
   let btn;
   let favEl;
+  let wrapEl;
 
   function buildButton() {
     const wrap = document.createElement('div');
     wrap.id = 'navbtn-wrap';
+    wrapEl = wrap;
 
     btn = document.createElement('div');
     btn.id = 'navbtn';
@@ -203,6 +205,13 @@
   function updateButton() {
     if (!btn) return;
     const t = targetTab();
+
+    // Auto-hide : bouton invisible tant qu'aucun aller-retour n'est possible
+    // (toggle sur les mêmes events que le refresh — zéro mécanisme en plus)
+    if (wrapEl) {
+      wrapEl.classList.toggle('navbtn-notarget', !t && pref.bool('navbtn.autoHide', true));
+    }
+
     const showFav = pref.bool('navbtn.showFavicon', true);
 
     if (!t) {

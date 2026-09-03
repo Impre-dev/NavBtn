@@ -28,5 +28,11 @@
     "label": "🔊 Son de pression du bouton (key.wav)",
     "type": "checkbox",
     "defaultValue": "true"
+  },
+  {
+    "property": "navbtn.autoHide",
+    "label": "Masquer le bouton quand aucun aller-retour n'est possible",
+    "type": "checkbox",
+    "defaultValue": "true"
   }
 ]
