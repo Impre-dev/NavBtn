@@ -43,6 +43,90 @@
   // ================================================================
   let clickSound = null;
 
+  // TRACE — journal d'enquête (bug fermeture middle-click : zombie tab +
+  // bouton pas mis à jour). Log l'état gBrowser à chaque événement clé.
+  // À RETIRER une fois la root cause identifiée.
+  function tr(tag, extra) {
+    const has = window.gBrowser && gBrowser.tabs;
+    const parts = [
+      tag,
+      'tabs=' + (has ? gBrowser.tabs.length : '?'),
+      'vis=' + (has ? gBrowser.visibleTabs.length : '?'),
+      'sel#' + (has && gBrowser.selectedTab ? gBrowser.selectedIndex : 'NULL'),
+      'selOK=' + (has && gBrowser.selectedTab ? gBrowser.selectedTab.isConnected : '?'),
+    ];
+    console.log('[NavBtn▶]', parts.join(' '), extra || '');
+  }
+
+  // TRACE PROFONDE — wrappers runtime du pipeline de fermeture natif.
+  // Objectif : capter la STACK de la première exception qui interrompt
+  // removeTab/_endRemoveTab (hypothèse : throw synchrone dans le switcher
+  // Zen via _blurTab / handleTabBeforeClose / onTabRemoved). À RETIRER.
+  function armCloseTrace() {
+    const gb = window.gBrowser;
+    if (!gb || gb.__navbtnCloseTrace) return;
+    gb.__navbtnCloseTrace = true;
+
+    const lbl = (t) => (t ? JSON.stringify(t.label.slice(0, 40)) : String(t));
+
+    const origRemove = gb.removeTab;
+    gb.removeTab = function (tab, params) {
+      console.log('[NavBtn▶] removeTab enter', lbl(tab), 'closing=' + !!tab.closing, 'linked=' + !!tab.linkedBrowser);
+      try {
+        const r = origRemove.call(this, tab, params);
+        console.log('[NavBtn▶] removeTab returned', lbl(tab), 'inTabs=' + gb.tabs.includes(tab), 'linked=' + !!tab.linkedBrowser);
+        return r;
+      } catch (e) {
+        console.error('[NavBtn▶] removeTab THREW', lbl(tab), e);
+        throw e;
+      }
+    };
+
+    const origEnd = gb._endRemoveTab;
+    gb._endRemoveTab = function (tab) {
+      console.log('[NavBtn▶] _endRemoveTab enter', lbl(tab));
+      try {
+        const r = origEnd.call(this, tab);
+        console.log('[NavBtn▶] _endRemoveTab done', lbl(tab), tab ? 'inTabs=' + gb.tabs.includes(tab) + ' linked=' + !!tab.linkedBrowser : '');
+        return r;
+      } catch (e) {
+        console.error('[NavBtn▶] _endRemoveTab THREW', lbl(tab), e);
+        throw e;
+      }
+    };
+
+    const origBlur = gb._blurTab;
+    gb._blurTab = function (tab) {
+      try {
+        const r = origBlur.call(this, tab);
+        console.log('[NavBtn▶] _blurTab ok →', lbl(gb.selectedTab));
+        return r;
+      } catch (e) {
+        console.error('[NavBtn▶] _blurTab THREW', lbl(tab), e);
+        throw e;
+      }
+    };
+
+    const ws = window.gZenWorkspaces;
+    if (ws && ws.handleTabBeforeClose && !ws.__navbtnCloseTrace) {
+      ws.__navbtnCloseTrace = true;
+      const origHtbc = ws.handleTabBeforeClose;
+      ws.handleTabBeforeClose = function (tab, cwwl) {
+        const r = origHtbc.call(this, tab, cwwl);
+        console.log('[NavBtn▶] handleTabBeforeClose', lbl(tab), '→ newTab:', lbl(r));
+        return r;
+      };
+    }
+
+    // Filet : stack complète de toute erreur switcher/linkedBrowser non-capturée.
+    window.addEventListener('error', (ev) => {
+      if (ev.message && /AsyncTabSwitcher|linkedBrowser|isRemoteBrowser/.test(ev.message)) {
+        console.error('[NavBtn▶] window error:', ev.message, '\nstack:', ev.error && ev.error.stack);
+      }
+    });
+    console.log('[NavBtn▶] close-trace armée (removeTab/_endRemoveTab/_blurTab/handleTabBeforeClose wrappés)');
+  }
+
   async function loadSound() {
     try {
       const path = PathUtils.join(PathUtils.profileDir, 'chrome', 'sine-mods', 'navbtn', 'resources', 'key.wav');
@@ -84,6 +168,7 @@
     watchTabs();
     portSwitcher();
     loadSound();
+    armCloseTrace();
 
     // Armement de la pile : quand le session restore a fini (event dédié),
     // sinon la chorégraphie de démarrage polluerait la pile MRU (flash).
@@ -147,6 +232,7 @@
     const tc = gBrowser.tabContainer;
 
     tc.addEventListener('TabSelect', () => {
+      tr('TabSelect', '«' + (gBrowser.selectedTab ? gBrowser.selectedTab.label : '?').slice(0, 30) + '»');
       if (!mruArmed) return; // ignore la chorégraphie de démarrage
       const t = gBrowser.selectedTab;
       const i = mru.indexOf(t);
@@ -159,6 +245,7 @@
     // "Entrée disparaît" : le retrait à la fermeture fait remonter
     // naturellement vers l'onglet d'avant.
     tc.addEventListener('TabClose', (e) => {
+      tr('TabClose', '«' + (e.target.label || '').slice(0, 30) + '» pinned=' + e.target.pinned);
       if (!mruArmed) return;
       const i = mru.indexOf(e.target);
       if (i !== -1) mru.splice(i, 1);
@@ -242,12 +329,16 @@
         e.stopPropagation();
         playClick();
         const tab = gBrowser.selectedTab;
+        tr('BTN middle', '«' + (tab ? tab.label : '?').slice(0, 30) + '» pinned=' + !!(tab && tab.pinned) + ' ess=' + !!(tab && tab.hasAttribute('zen-essential')));
         // Épinglé/Essential : discard (unload mémoire, onglet conservé)
         // — même règle que le switcher ctrlTab, API officielle Zen
         if (tab.pinned || tab.hasAttribute('zen-essential')) {
-          gBrowser.explicitUnloadTabs([tab]).catch((err) => console.error('[NavBtn] Discard error:', err.message));
+          gBrowser.explicitUnloadTabs([tab])
+            .then(() => tr('BTN discard done', '«' + tab.label.slice(0, 30) + '» inTabs=' + gBrowser.tabs.includes(tab) + ' linked=' + !!tab.linkedBrowser))
+            .catch((err) => console.error('[NavBtn] Discard error:', err.message));
         } else {
           gBrowser.removeTab(tab);
+          setTimeout(() => tr('BTN middle post-close', '«' + tab.label.slice(0, 30) + '» stillInTabs=' + gBrowser.tabs.includes(tab) + ' linked=' + !!tab.linkedBrowser), 0);
         }
         return;
       }
@@ -326,6 +417,7 @@
   function updateButton() {
     if (!btn) return;
     const t = targetTab();
+    tr('updateButton', 'tgt=«' + (t ? (t.label || '').slice(0, 25) : 'null') + '» cur=«' + (gBrowser.selectedTab ? (gBrowser.selectedTab.label || '').slice(0, 25) : '?') + '» mru=[' + mru.slice(0, 5).map((x) => (x.label || '').slice(0, 14)).join(' | ') + ']');
 
     // Auto-hide : invisible tant qu'aucun aller-retour n'est possible,
     // pendant le boot splash BG-Zen (notre z-index flotte au-dessus de lui),
