@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name           NavBtn
-// @version        1.4.4
+// @version        1.4.5
 // @description    Bouton overlay gamboy — clic gauche: onglet précédent (MRU ping-pong) · clic droit: switcher ctrlTab
 // @author         Impre
 // @include        main
@@ -45,9 +45,7 @@
 
   async function loadSound() {
     try {
-      const path = PathUtils.join(
-        PathUtils.profileDir, 'chrome', 'sine-mods', 'navbtn', 'resources', 'key.wav',
-      );
+      const path = PathUtils.join(PathUtils.profileDir, 'chrome', 'sine-mods', 'navbtn', 'resources', 'key.wav');
       if (!(await IOUtils.exists(path))) return;
       const bytes = await IOUtils.read(path);
       let binary = '';
@@ -114,7 +112,7 @@
       },
     });
 
-    console.log('[NavBtn] v1.4.4 — bouton prêt, MRU armé au SSWindowRestored');
+    console.log('[NavBtn] v1.4.5 — bouton prêt, MRU armé au SSWindowRestored');
   }
 
   // ================================================================
@@ -247,9 +245,7 @@
         // Épinglé/Essential : discard (unload mémoire, onglet conservé)
         // — même règle que le switcher ctrlTab, API officielle Zen
         if (tab.pinned || tab.hasAttribute('zen-essential')) {
-          gBrowser
-            .explicitUnloadTabs([tab])
-            .catch((err) => console.error('[NavBtn] Discard error:', err.message));
+          gBrowser.explicitUnloadTabs([tab]).catch((err) => console.error('[NavBtn] Discard error:', err.message));
         } else {
           gBrowser.removeTab(tab);
         }
@@ -323,10 +319,7 @@
     const curTab = gBrowser.selectedTab;
     const loading = !!curTab && curTab.hasAttribute('busy');
     if (wrapEl) {
-      wrapEl.classList.toggle(
-        'navbtn-notarget',
-        (!t || loading || bootSplashActive()) && pref.bool('navbtn.autoHide', true),
-      );
+      wrapEl.classList.toggle('navbtn-notarget', (!t || loading || bootSplashActive()) && pref.bool('navbtn.autoHide', true));
     }
 
     // Favicon droite — où tu es (le présent)
@@ -366,12 +359,294 @@
   // ================================================================
   const CANCEL_KEY = 'Escape';
 
+  // ================================================================
+  // GRILLE RESPONSIVE du switcher ctrlTab
+  // Source native (browser-ctrlTab.js) :
+  //  - max 7 previews (maxTabPreviews), chacun <button flex="1">
+  //    → l'attribut XUL flex=1 les étire/squeeze sur UNE ligne
+  //  - largeur réelle d'un item = canvasWidth + 16px (padding 8+8)
+  // Ici : grille compacte max GRID_MAX_COLS colonnes, items figés
+  // (flex: 0 0 auto) + flex-wrap sur le conteneur → 7 onglets =
+  // 4 cols × 2 rows centré, fini la ligne qui traverse l'écran.
+  // ================================================================
+  const GRID_MAX_COLS = 4;
+  const MAX_TAB_PREVIEWS = 12; // cap natif : 7 (prévu pour une seule ligne)
+
+  // Le conteneur natif #ctrlTab-previews est un <hbox> XUL : impossible
+  // d'y imposer une grille fiable — les <button flex="1"> restent soumis
+  // au box layout XUL quel que soit le display CSS posé sur le parent.
+  // → on déplace les previews dans une vraie <div> HTML en display:grid,
+  // créée UNE fois puis réutilisée à chaque ouverture (les listeners des
+  // boutons suivent le nœud, updatePreviews opère sur le tableau previews
+  // indépendamment du DOM — aucun état natif cassé).
+  function ensureGrid(ct) {
+    const cont = ct.panel.querySelector('#ctrlTab-previews');
+    if (!cont) return null;
+    let grid = ct.panel.querySelector('#navbtn-ctrltab-grid');
+    if (!grid) {
+      grid = document.createElement('div');
+      grid.id = 'navbtn-ctrltab-grid';
+      for (const p of [...cont.children]) grid.appendChild(p);
+      cont.parentNode.insertBefore(grid, cont.nextSibling);
+      cont.hidden = true;
+    }
+    return grid;
+  }
+
+  // Slot shadow du panel ctrlTab : c'est LUI qui peint le gris natif
+  // (bg rgba(102,102,102,.85), mesuré au diagnostic) et le padding/flex
+  // du thème tidypopup (display:flex + padding 6px !important sur
+  // ::part(content)). Un override CSS ::part() ne matche pas depuis
+  // notre feuille (::part = author sheets uniquement) → styles INLINE
+  // via chrome JS : priorité maximale, contestable par personne.
+  // Appelée à l'init ET à popupshown (le shadow root peut être créé
+  // paresseusement à la première ouverture).
+  function neutralizeSlot(ct) {
+    if (ct.__navbtnSlotDone) return;
+    const slot = ct.panel.openOrClosedShadowRoot?.querySelector('slot');
+    if (!slot) return; // pas encore créé — retenter à popupshown
+    const s = slot.style;
+    s.setProperty('display', 'block', 'important');
+    s.setProperty('background', 'transparent', 'important');
+    s.setProperty('box-shadow', 'none', 'important');
+    s.setProperty('border', 'none', 'important');
+    s.setProperty('padding', '0', 'important');
+    s.setProperty('margin', '0', 'important');
+    s.setProperty('overflow', 'clip', 'important');
+    s.setProperty('border-radius', '16px', 'important');
+    ct.__navbtnSlotDone = true;
+    console.log('[NavBtn] slot ctrlTab neutralisé (gris/padding/flex)');
+  }
+
+  // --- Blur du switcher : NOS overlays (doctrine : NavBtn possède
+  // ctrlTab, structure ET peau — plans/doctrine-mods.md). Porté depuis
+  // Nebula-Fork avec le FIX du bug qui causait le "padding fantôme" :
+  // Nebula posait les overlays en coords VIEWPORT (r.top + scrollY —
+  // scrollY vaut TOUJOURS 0 dans un doc chrome) alors qu'ils sont
+  // absolus dans #browser, dont l'origine est SOUS les toolbars →
+  // conteneur flou décalé bas/droite, vignettes collées en haut-gauche.
+  // Fix : soustraire le rect de #browser (même référentiel).
+  function portBlur() {
+    const ct = window.ctrlTab;
+    const browser = document.getElementById('browser');
+    if (!ct || !browser) return;
+    if (document.getElementById('navbtn-ctrltab-blur-above')) return;
+
+    const mk = (id, css) => {
+      const o = document.createElement('div');
+      o.id = id;
+      Object.assign(o.style, { position: 'absolute', display: 'none', borderRadius: '16px' }, css);
+      browser.appendChild(o);
+      return o;
+    };
+
+    // above : le blur (au-dessus du fond opaque, sous le panel)
+    const above = mk('navbtn-ctrltab-blur-above', {
+      zIndex: '2147483646',
+      pointerEvents: 'auto',
+      backdropFilter: 'blur(32px) saturate(140%)',
+    });
+    // below : fond opaque qui assure la lisibilité derrière le blur
+    const below = mk('navbtn-ctrltab-blur-below', {
+      pointerEvents: 'none',
+      backgroundColor: 'light-dark(rgb(200 200 200 / 100%), rgb(20 20 20 / 100%))',
+    });
+
+    let raf = 0;
+    const hide = () => {
+      if (raf) cancelAnimationFrame(raf);
+      raf = 0;
+      above.style.display = below.style.display = 'none';
+    };
+    // Tracking visuel pendant l'ouverture uniquement (démarré à
+    // popupshown, stoppé à popuphidden — pas de boucle au repos).
+    const track = () => {
+      const r = ct.panel.getBoundingClientRect();
+      if (r.width < 5 || r.height < 5) return hide();
+      const b = browser.getBoundingClientRect(); // LE FIX : référentiel #browser
+      const s = {
+        top: r.top - b.top + 'px',
+        left: r.left - b.left + 'px',
+        width: r.width + 'px',
+        height: r.height + 'px',
+        display: 'block',
+      };
+      Object.assign(above.style, s);
+      Object.assign(below.style, s);
+      raf = requestAnimationFrame(track);
+    };
+
+    ct.panel.addEventListener('popupshown', track);
+    ct.panel.addEventListener('popuphidden', hide);
+    console.log('[NavBtn] blur switcher porté (overlays propres, coords fixées)');
+  }
+
+  function resizePanel(ct) {
+    const count = ct.tabPreviewCount;
+    const itemH = ct.canvasHeight + 10 + 40; // canvas + padding + favicon/label
+    const gap = 4;
+    const avail = screen.availWidth * 0.95;
+
+    // Largeur item MESURÉE, plus estimée : le calcul théorique dérive
+    // (padding/border XUL du bouton, favicon…) et un track trop étroit
+    // fait déborder la dernière colonne sur le padding droit du panel.
+    // scrollWidth = largeur réelle du contenu du bouton (layout synchrone).
+    const grid = ensureGrid(ct);
+    let itemW = ct.canvasWidth + 14; // estimation de départ (padding inner)
+    if (grid) {
+      const fb = grid.querySelector('.ctrlTab-preview:not([hidden])');
+      if (fb) {
+        // Track = largeur RÉELLE du bouton : zéro slack, le canvas remplit
+        // son track. +8 couvre le favicon natif qui déborde à droite
+        // (margin-inline-end négatif, non compté par scrollWidth).
+        const w = Math.ceil(fb.scrollWidth) + 8;
+        if (w > itemW) itemW = w;
+      }
+    }
+
+    // Colonnes : limitées par la grille, le nombre d'onglets ET l'écran
+    const cols = Math.max(1, Math.min(count, GRID_MAX_COLS, Math.floor((avail - 20) / (itemW + gap))));
+    const rows = Math.ceil(count / cols);
+    const gridW = cols * itemW + (cols - 1) * gap;
+    const width = gridW + 20; // padding horizontal du panel (10+10)
+
+    ct.panel.style.width = width + 'px';
+
+    // Grille IN-FLOW : elle dimensionne le panel (la fenêtre native suit
+    // le slot). Le décalage XUL d'antan n'existe plus : le slot shadow
+    // est forcé en display:block/padding:0 par JS (cf portSwitcher),
+    // les marges sont gérées par le margin symétrique de la grille.
+    if (grid) {
+      grid.style.display = 'grid';
+      grid.style.gridTemplateColumns = 'repeat(' + cols + ', ' + itemW + 'px)';
+      grid.style.gap = gap + 'px';
+      // ⚠ PADDING, pas margin : la fenêtre popup épouse le contenu SANS
+      // compter les margins verticaux (testé : 10→20px = zéro effet).
+      // Le padding est interne → il pousse le fit-content → la fenêtre
+      // grandit. Top +3 : compensation visuelle (padding interne vignette).
+      grid.style.width = gridW + 'px'; // content-box : +20px de padding → gridW+20 = largeur panel
+      grid.style.padding = '24px 10px 0';
+      grid.style.margin = '0';
+    }
+
+    // showAll sous la grille, in-flow lui aussi.
+    const allC = ct.panel.querySelector('#ctrlTab-showAll-container');
+    if (allC) {
+      allC.style.width = gridW + 'px';
+      allC.style.margin = '0 10px 0'; // G/D ok (largeur panel forcée)
+      allC.style.paddingBottom = '12px'; // padding pour le bas (idem)
+    }
+
+    // Position initiale estimée (anti-flash) — le centrage exact est
+    // fait à popupshown sur les dimensions réelles (cf portSwitcher).
+    // ⚠ Centrage sur la FENÊTRE, pas l'écran (le natif fait
+    // openPopupAtScreen → panel hors fenêtre quand elle n'est pas
+    // plein écran — défaut hérité d'OneForAll).
+    const estimateHeight = itemH * rows + 75;
+    const x = window.screenX + (window.outerWidth - width) / 2;
+    const y = window.screenY + (window.outerHeight - estimateHeight) / 2;
+    ct.panel.moveTo(x, y);
+
+    console.log(
+      '[NavBtn] ctrlTab grid:',
+      count,
+      'previews →',
+      cols,
+      'cols ×',
+      rows,
+      'rows, item',
+      Math.round(itemW) + 'px, panel',
+      Math.round(width) + 'px',
+    );
+  }
+
   function isTrigger(e) {
     return e.code === 'Numpad1' && e.ctrlKey && e.altKey;
   }
 
   function portSwitcher() {
     const ct = window.ctrlTab;
+
+    // Le cap natif (7 previews) était dimensionné pour une ligne unique.
+    // Notre grille permet plus. ⚠ Piège natif : le getter previews() se
+    // remplace par un CACHE après son premier accès (il ne recrée jamais
+    // les boutons) → si ctrlTab.init() l'a déjà touché au boot, monter
+    // maxTabPreviews ne change rien. On gère les 2 cas : lever le cap,
+    // puis étendre le cache existant à la main via _makePreview() natif.
+    ct.maxTabPreviews = MAX_TAB_PREVIEWS;
+    const host = document.getElementById('navbtn-ctrltab-grid') || document.getElementById('ctrlTab-previews');
+    const previewsArr = ct.previews; // crée 12 si vierge, sinon le cache 7
+    if (previewsArr.length - 1 < MAX_TAB_PREVIEWS && host) {
+      const showAll = previewsArr.pop(); // showAllButton reste en fin de liste
+      while (previewsArr.length < MAX_TAB_PREVIEWS) {
+        const p = ct._makePreview();
+        previewsArr.push(p);
+        host.appendChild(p);
+      }
+      previewsArr.push(showAll);
+      console.log('[NavBtn] previews étendus :', previewsArr.length - 1);
+    }
+
+    neutralizeSlot(ct);
+    portBlur();
+
+    // Centrage EXACT : l'estimation de hauteur multi-lignes dérive trop →
+    // on mesure le panel réellement rendu à popupshown (event-driven) et
+    // on recentre sur les vraies dimensions, les deux axes.
+    ct.panel.addEventListener('popupshown', () => {
+      neutralizeSlot(ct);
+      const r = ct.panel.getBoundingClientRect();
+
+      // DIAGNOSTIC géométrie complet (à retirer après calage) : panel vs
+      // grille vs showAll + slot shadow du panel → qui est la "barre
+      // grise" et où dérive le centrage.
+      try {
+        const g = document.getElementById('navbtn-ctrltab-grid');
+        const allC = ct.panel.querySelector('#ctrlTab-showAll-container');
+        const pv = document.getElementById('ctrlTab-previews');
+        if (g) {
+          const gr = g.getBoundingClientRect();
+          const ar = allC && allC.getBoundingClientRect();
+          const vr = pv && pv.getBoundingClientRect();
+          console.log(
+            '[NavBtn] géo: panel',
+            Math.round(r.width) + '×' + Math.round(r.height),
+            '@' + Math.round(r.x) + ',' + Math.round(r.y),
+            '| styleH',
+            ct.panel.style.height,
+            '| grille',
+            Math.round(gr.width) + '×' + Math.round(gr.height),
+            'Δ' + Math.round(gr.x - r.x) + ',' + Math.round(gr.y - r.y),
+            '| showAll',
+            ar ? Math.round(ar.width) + '×' + Math.round(ar.height) + ' Δ' + Math.round(ar.x - r.x) + ',' + Math.round(ar.y - r.y) : 'absent',
+            '| previews(caché)',
+            vr ? Math.round(vr.height) : '?',
+          );
+        }
+        const sr = ct.panel.openOrClosedShadowRoot;
+        if (sr) {
+          const slot = sr.querySelector('slot');
+          if (slot) {
+            const sc = getComputedStyle(slot);
+            console.log('[NavBtn] slot:', 'disp', sc.display, '| bg', sc.backgroundColor, '| h', sc.height, '| w', sc.width);
+          }
+        }
+      } catch (e) {
+        console.warn('[NavBtn] géo diag:', e.message);
+      }
+
+      // (Plus besoin de recalcul de hauteur : la grille in-flow
+      // dimensionne le panel naturellement.)
+
+      ct.panel.moveTo(window.screenX + (window.outerWidth - r.width) / 2, window.screenY + (window.outerHeight - r.height) / 2);
+
+      // Wheel attaché UNIQUEMENT pendant l'ouverture (cf onWheel plus bas)
+      window.addEventListener('wheel', onWheel, { capture: true, passive: false });
+    });
+
+    ct.panel.addEventListener('popuphidden', () => {
+      window.removeEventListener('wheel', onWheel, { capture: true, passive: false });
+    });
 
     // --- KEYDOWN — toggle open/commit + cancel ---
     window.addEventListener(
@@ -393,18 +668,16 @@
       true,
     );
 
-    // --- WHEEL — naviguer les previews (panel ouvert uniquement) ---
-    window.addEventListener(
-      'wheel',
-      (e) => {
-        if (!ct.isOpen) return;
-        e.preventDefault();
-        e.stopPropagation();
-        if (e.deltaY > 0) ct.advanceFocus(true);
-        else ct.advanceFocus(false);
-      },
-      { capture: true, passive: false },
-    );
+    // --- WHEEL — naviguer les previews ---
+    // ⚠ Perf : un listener passive:false sur window se place dans le chemin
+    // de latence du scroll de CHAQUE page, panel fermé ou pas. On l'attache
+    // donc à popupshown et on le détache à popuphidden (zéro coût au repos).
+    const onWheel = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.deltaY > 0) ct.advanceFocus(true);
+      else ct.advanceFocus(false);
+    };
 
     // --- MIDDLE-CLICK — close/discard depuis les previews ---
     // Monkey-patch: garder le panel ouvert quand tabCount tombe à 2
@@ -417,14 +690,9 @@
         origRemoveClosing(aTab);
       }
 
-      // Recalcul largeur + recentrage (même formule que _openPanel)
+      // Recalcul grille + recentrage (responsive, cf resizePanel)
       try {
-        let width = Math.min(screen.availWidth * 0.99, this.canvasWidth * 1.25 * this.tabPreviewCount);
-        this.panel.style.width = width + 'px';
-        let x = screen.availLeft + (screen.availWidth - width) / 2;
-        let estimateHeight = this.canvasHeight * 1.25 + 75;
-        let y = screen.availTop + (screen.availHeight - estimateHeight) / 2;
-        this.panel.moveTo(x, y);
+        resizePanel(ct);
       } catch (e) {
         console.warn('[NavBtn] Panel resize failed:', e.message);
       }
@@ -454,12 +722,7 @@
               } catch (_) {}
 
               try {
-                let width = Math.min(screen.availWidth * 0.99, ct.canvasWidth * 1.25 * ct.tabPreviewCount);
-                ct.panel.style.width = width + 'px';
-                let x = screen.availLeft + (screen.availWidth - width) / 2;
-                let estimateHeight = ct.canvasHeight * 1.25 + 75;
-                let y = screen.availTop + (screen.availHeight - estimateHeight) / 2;
-                ct.panel.moveTo(x, y);
+                resizePanel(ct);
               } catch (_) {}
 
               console.log('[NavBtn] Discarded pinned tab:', tab.label);
@@ -493,11 +756,23 @@
   // Ouvrir le switcher instantanément (bypass du délai natif 200ms)
   // ================================================================
   function openInstant(ct) {
+    // open() calcule canvasWidth = écran*0.85/maxTabPreviews → vignettes
+    // minuscules avec notre cap de 12. Et si on re-rendait après coup,
+    // les DEUX batches de thumbnails async se battraient (le dernier
+    // résolu gagne) → tailles mixtes. Dance propre : cap à 7 le temps
+    // d'open() (taille vignette "grand écran", rendu unique), puis
+    // restauration immédiate pour tabPreviewCount.
+    const cap = ct.maxTabPreviews;
+    ct.maxTabPreviews = 7;
     ct.open();
+    ct.maxTabPreviews = cap;
     if (ct._timer) {
       clearTimeout(ct._timer);
       ct._timer = null;
       ct._openPanel();
+      // _openPanel pose la largeur native mono-ligne → on repasse
+      // en grille responsive immédiatement (même frame, pas de flash)
+      resizePanel(ct);
     }
   }
 

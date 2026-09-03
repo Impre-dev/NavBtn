@@ -236,3 +236,22 @@
     opacity: 1;
   }
 }
+
+/* (Le switcher ctrlTab est géré en JS : les previews natifs sont déplacés
+   dans une div HTML display:grid — cf ensureGrid/resizePanel dans le .uc.js.
+   Le conteneur natif #ctrlTab-previews est masqué, plus besoin de CSS.) */
+
+/* Switcher — vignettes : padding intérieur natif 8px → 5px pour
+   resserrer l'ensemble (track = scrollWidth mesuré, cf resizePanel). */
+#navbtn-ctrltab-grid .ctrlTab-preview-inner {
+  padding: 5px;
+}
+
+/* Switcher : le gris natif du panel (bg rgba(102,102,102,.85) sur le
+   slot shadow) + le padding/flex du thème tidypopup sont neutralisés
+   en JS via styles inline sur le slot — cf neutralizeSlot dans le
+   .uc.js (un ::part(content) CSS ne matche pas depuis cette feuille :
+   ::part = author sheets uniquement). Le blur du switcher est géré par
+   nos propres overlays (#navbtn-ctrltab-blur-*, cf portBlur) avec leur
+   radius inline — Nebula-Fork n'intervient plus sur ctrlTab
+   (doctrine : plans/doctrine-mods.md). */
