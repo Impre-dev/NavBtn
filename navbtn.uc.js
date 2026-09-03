@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name           NavBtn
-// @version        1.3.2
+// @version        1.4.3
 // @description    Bouton overlay gamboy — clic gauche: onglet précédent (MRU ping-pong) · clic droit: switcher ctrlTab
 // @author         Impre
 // @include        main
@@ -23,6 +23,13 @@
     bool(name, fallback) {
       try {
         return Services.prefs.prefHasUserValue(name) ? Services.prefs.getBoolPref(name) : fallback;
+      } catch (_) {
+        return fallback;
+      }
+    },
+    str(name, fallback) {
+      try {
+        return Services.prefs.prefHasUserValue(name) ? Services.prefs.getStringPref(name) : fallback;
       } catch (_) {
         return fallback;
       }
@@ -97,7 +104,17 @@
       attributeFilter: ['bgzen-booted'],
     });
 
-    console.log('[NavBtn] v1.3.2 — bouton prêt, MRU armé au SSWindowRestored');
+    // Labo d'animations : preset live via la pref MCM navbtn.anim.
+    // Observer de pref = event-driven, changement sans restart.
+    Services.prefs.addObserver('navbtn.anim', {
+      observe: () => {
+        if (!wrapEl) return;
+        wrapEl.setAttribute('navbtn-anim', pref.str('navbtn.anim', 'fade'));
+        previewAnim();
+      },
+    });
+
+    console.log('[NavBtn] v1.4.3 — bouton prêt, MRU armé au SSWindowRestored');
   }
 
   // ================================================================
@@ -155,9 +172,9 @@
       setTimeout(updateButton, 0);
     });
 
-    // Refresh favicon/label uniquement pour la cible courante
+    // Refresh favicon/label : cible ET onglet courant (double favicon)
     tc.addEventListener('TabAttrModified', (e) => {
-      if (e.target === targetTab()) updateButton();
+      if (e.target === targetTab() || e.target === gBrowser.selectedTab) updateButton();
     });
   }
 
@@ -177,7 +194,8 @@
   // BOUTON OVERLAY — un seul nœud dans le chrome UI
   // ================================================================
   let btn;
-  let favEl;
+  let curEl; // favicon droite — site courant (présent)
+  let tgtEl; // favicon gauche — site précédent (passé, la cible)
   let wrapEl;
 
   function buildButton() {
@@ -187,20 +205,27 @@
     // Le premier updateButton() ne le révèle que si une cible existe VRAIMENT.
     wrap.classList.add('navbtn-notarget');
     wrapEl = wrap;
+    // Preset d'animation courant (labo MCM — navbtn.anim)
+    wrap.setAttribute('navbtn-anim', pref.str('navbtn.anim', 'fade'));
 
     btn = document.createElement('div');
     btn.id = 'navbtn';
     btn.setAttribute('role', 'button');
 
-    // ◀◀ — icône rewind en pur CSS (clip-path, thème via currentColor)
-    const ff = document.createElement('div');
-    ff.className = 'navbtn-ff';
+    // [précédent] / [courant] — timeline naturelle : passé à gauche,
+    // présent à droite (le cerveau lit l'espace comme du temps)
+    tgtEl = document.createElement('div');
+    tgtEl.className = 'navbtn-fav navbtn-tgt';
 
-    favEl = document.createElement('div');
-    favEl.className = 'navbtn-fav';
+    const slash = document.createElement('div');
+    slash.className = 'navbtn-slash';
 
-    btn.appendChild(ff);
-    btn.appendChild(favEl);
+    curEl = document.createElement('div');
+    curEl.className = 'navbtn-fav navbtn-cur';
+
+    btn.appendChild(tgtEl);
+    btn.appendChild(slash);
+    btn.appendChild(curEl);
     wrap.appendChild(btn);
     document.documentElement.appendChild(wrap);
 
@@ -268,6 +293,17 @@
   }
 
   // Splash BG-Zen actif ? (BG-Zen absent du profil → jamais actif)
+  // Preview MCM : rejoue l'animation d'ENTRÉE du preset courant.
+  // Cycle add class → reflow forcé → remove : l'état caché s'applique
+  // sans transition (règle CSS navbtn-preview), puis son retrait
+  // déclenche la transition/animation d'entrée du preset.
+  function previewAnim() {
+    if (!wrapEl) return;
+    wrapEl.classList.add('navbtn-preview');
+    void wrapEl.offsetWidth; // reflow : styles cachés appliqués à froid
+    wrapEl.classList.remove('navbtn-preview');
+  }
+
   function bootSplashActive() {
     if (typeof window.__bgZenLoaded === 'undefined') return false;
     const mw = document.getElementById('main-window');
@@ -287,22 +323,32 @@
       );
     }
 
-    const showFav = pref.bool('navbtn.showFavicon', true);
+    // Favicon droite — où tu es (le présent)
+    const cur = gBrowser.selectedTab;
+    const curImg = cur && cur.getAttribute('image');
+    if (curImg) {
+      curEl.style.backgroundImage = 'url("' + curImg + '")';
+      curEl.classList.remove('navbtn-nofav');
+    } else {
+      curEl.style.backgroundImage = '';
+      curEl.classList.add('navbtn-nofav');
+    }
 
+    // Favicon gauche — le site précédent (le passé, la cible du clic)
     if (!t) {
-      favEl.style.backgroundImage = '';
-      favEl.classList.add('navbtn-nofav');
+      tgtEl.style.backgroundImage = '';
+      tgtEl.classList.add('navbtn-nofav');
       btn.setAttribute('tooltiptext', 'NavBtn — rien à switcher');
       return;
     }
 
     const img = t.getAttribute('image');
-    if (showFav && img) {
-      favEl.style.backgroundImage = 'url("' + img + '")';
-      favEl.classList.remove('navbtn-nofav');
+    if (img) {
+      tgtEl.style.backgroundImage = 'url("' + img + '")';
+      tgtEl.classList.remove('navbtn-nofav');
     } else {
-      favEl.style.backgroundImage = '';
-      favEl.classList.add('navbtn-nofav');
+      tgtEl.style.backgroundImage = '';
+      tgtEl.classList.add('navbtn-nofav');
     }
     btn.setAttribute('tooltiptext', 'NavBtn → ' + (t.label || 'onglet'));
   }

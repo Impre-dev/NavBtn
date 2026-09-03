@@ -18,12 +18,6 @@
     "defaultValue": "true"
   },
   {
-    "property": "navbtn.showFavicon",
-    "label": "Afficher la favicon de l'onglet cible dans le bouton",
-    "type": "checkbox",
-    "defaultValue": "true"
-  },
-  {
     "property": "navbtn.sound",
     "label": "🔊 Son de pression du bouton (key.wav)",
     "type": "checkbox",
@@ -34,5 +28,19 @@
     "label": "Masquer le bouton quand aucun aller-retour n'est possible",
     "type": "checkbox",
     "defaultValue": "true"
+  },
+  {
+    "property": "navbtn.anim",
+    "label": "🎞️ Animation d'entrée/sortie du bouton",
+    "type": "dropdown",
+    "defaultValue": "fade",
+    "options": [
+      { "label": "Fade — discret (défaut)", "value": "fade" },
+      { "label": "Steps — sprite spawn 8-bit", "value": "steps" },
+      { "label": "Slide — depuis le bord droit", "value": "slide" },
+      { "label": "Pop — ressort cartoon", "value": "pop" },
+      { "label": "Drop — chute avec rebond", "value": "drop" },
+      { "label": "Blink — power-on Game Boy", "value": "blink" }
+    ]
   }
 ]
