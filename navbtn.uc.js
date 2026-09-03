@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name           NavBtn
-// @version        1.4.3
+// @version        1.4.4
 // @description    Bouton overlay gamboy — clic gauche: onglet précédent (MRU ping-pong) · clic droit: switcher ctrlTab
 // @author         Impre
 // @include        main
@@ -114,7 +114,7 @@
       },
     });
 
-    console.log('[NavBtn] v1.4.3 — bouton prêt, MRU armé au SSWindowRestored');
+    console.log('[NavBtn] v1.4.4 — bouton prêt, MRU armé au SSWindowRestored');
   }
 
   // ================================================================
@@ -172,7 +172,8 @@
       setTimeout(updateButton, 0);
     });
 
-    // Refresh favicon/label : cible ET onglet courant (double favicon)
+    // Refresh favicon/label/busy : cible ET onglet courant (double favicon
+    // + fin de chargement qui révèle le bouton, cf updateButton)
     tc.addEventListener('TabAttrModified', (e) => {
       if (e.target === targetTab() || e.target === gBrowser.selectedTab) updateButton();
     });
@@ -314,12 +315,17 @@
     if (!btn) return;
     const t = targetTab();
 
-    // Auto-hide : invisible tant qu'aucun aller-retour n'est possible OU
-    // pendant le boot splash BG-Zen (notre z-index flotte au-dessus de lui)
+    // Auto-hide : invisible tant qu'aucun aller-retour n'est possible,
+    // pendant le boot splash BG-Zen (notre z-index flotte au-dessus de lui),
+    // ou tant que l'onglet courant charge (attribut busy) → le bouton
+    // n'apparaît qu'une fois le site arrivé, favicons déjà posées
+    // (l'entrée/sortie de busy tire TabAttrModified → event-driven).
+    const curTab = gBrowser.selectedTab;
+    const loading = !!curTab && curTab.hasAttribute('busy');
     if (wrapEl) {
       wrapEl.classList.toggle(
         'navbtn-notarget',
-        (!t || bootSplashActive()) && pref.bool('navbtn.autoHide', true),
+        (!t || loading || bootSplashActive()) && pref.bool('navbtn.autoHide', true),
       );
     }
 
