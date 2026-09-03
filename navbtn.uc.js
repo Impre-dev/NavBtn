@@ -114,7 +114,7 @@
       },
     });
 
-    console.log('[NavBtn] v1.4.8 — bouton prêt, MRU armé au SSWindowRestored');
+    console.log('[NavBtn] v1.4.9 — bouton prêt, MRU armé au SSWindowRestored');
   }
 
   // ================================================================
@@ -180,6 +180,12 @@
     tc.addEventListener('TabAttrModified', (e) => {
       if (e.target === targetTab() || e.target === gBrowser.selectedTab) updateButton();
     });
+
+    // Onglet déchargé par un AUTRE biais que le bouton (menu contextuel Zen,
+    // session restore…) : il passe "pending" → quitte la cible du ping-pong.
+    // discardBrowser dispatche TabBrowserDiscarded (bubbling depuis le tab),
+    // quel que soit l'appelant → un seul listener couvre tous les chemins.
+    tc.addEventListener('TabBrowserDiscarded', () => updateButton());
   }
 
   function switchToPrevious() {
