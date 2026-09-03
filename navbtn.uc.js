@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name           NavBtn
-// @version        1.4.7
+// @version        1.4.10
 // @description    Bouton overlay gamboy — clic gauche: onglet précédent (MRU ping-pong) · clic droit: switcher ctrlTab
 // @author         Impre
 // @include        main
@@ -35,6 +35,11 @@
       }
     },
   };
+
+  // Logs par-action coupés en prod (console.log coûte cher console ouverte —
+  // sérialisation + render). Les logs boot one-shot restent en direct.
+  const DEBUG = false;
+  const dlog = DEBUG ? console.log.bind(console, '[NavBtn]') : () => {};
 
   // ================================================================
   // SON — key.wav en feedback de pression
@@ -77,6 +82,8 @@
   function init() {
     if (window.__navBtn) return;
     if (!window.gBrowser || !gBrowser.tabContainer || !window.ctrlTab) {
+      // LAST RESORT: aucun événement fiable ne signale la création de gBrowser/
+      // ctrlTab depuis un .uc.js chargé tôt — retry borné jusqu'à dispo.
       setTimeout(init, 500);
       return;
     }
@@ -114,7 +121,7 @@
       },
     });
 
-    console.log('[NavBtn] v1.4.9 — bouton prêt, MRU armé au SSWindowRestored');
+    console.log('[NavBtn] v1.4.10 — bouton prêt, MRU armé au SSWindowRestored');
   }
 
   // ================================================================
@@ -158,7 +165,7 @@
       if (i !== -1) mru.splice(i, 1);
       mru.unshift(t);
       if (mru.length > MRU_CAP) mru.pop();
-      updateButton();
+      scheduleUpdate();
     });
 
     // "Entrée disparaît" : le retrait à la fermeture fait remonter
@@ -167,7 +174,7 @@
       if (!mruArmed) return;
       const i = mru.indexOf(e.target);
       if (i !== -1) mru.splice(i, 1);
-      updateButton();
+      scheduleUpdate();
       // Event-loop yield : laisse gBrowser.selectedTab basculer sur son
       // successeur APRÈS la fermeture, puis recalcule. Sans ça, si le
       // TabClose arrive avant le switch de sélection, targetTab() croit
@@ -176,16 +183,32 @@
     });
 
     // Refresh favicon/label/busy : cible ET onglet courant (double favicon
-    // + fin de chargement qui révèle le bouton, cf updateButton)
+    // + fin de chargement qui révèle le bouton, cf updateButton).
+    // ⚠ Perf : l'événement tire en rafale pendant les chargements — le check
+    // selectedTab (le plus souvent gagnant) court-circuite targetTab().
     tc.addEventListener('TabAttrModified', (e) => {
-      if (e.target === targetTab() || e.target === gBrowser.selectedTab) updateButton();
+      if (e.target === gBrowser.selectedTab || e.target === targetTab()) scheduleUpdate();
     });
 
     // Onglet déchargé par un AUTRE biais que le bouton (menu contextuel Zen,
     // session restore…) : il passe "pending" → quitte la cible du ping-pong.
     // discardBrowser dispatche TabBrowserDiscarded (bubbling depuis le tab),
     // quel que soit l'appelant → un seul listener couvre tous les chemins.
-    tc.addEventListener('TabBrowserDiscarded', () => updateButton());
+    tc.addEventListener('TabBrowserDiscarded', () => scheduleUpdate());
+  }
+
+  // Coalescing : une même action déclenche plusieurs événements (discard →
+  // TabBrowserDiscarded + .then + TabSelect éventuel, rafale TabAttrModified
+  // pendant un chargement) → N recalculs identiques. Un seul updateButton
+  // par microtask — coalescé avant le prochain paint.
+  let updateScheduled = false;
+  function scheduleUpdate() {
+    if (updateScheduled) return;
+    updateScheduled = true;
+    queueMicrotask(() => {
+      updateScheduled = false;
+      updateButton();
+    });
   }
 
   function switchToPrevious() {
@@ -259,7 +282,7 @@
           gBrowser.explicitUnloadTabs([tab])
             // L'onglet passe "pending" → targetTab() l'exclut désormais :
             // refresh pour que l'icône passe au suivant immédiatement.
-            .then(() => updateButton())
+            .then(() => scheduleUpdate())
             .catch((err) => console.error('[NavBtn] Discard error:', err.message));
         } else {
           // FIX blur-target : quand tous les autres onglets sont épinglés/
@@ -361,10 +384,12 @@
     wrapEl.classList.remove('navbtn-preview');
   }
 
+  let mainWindowEl = null; // réf cachée — bootSplashActive tourne à CHAQUE updateButton
+
   function bootSplashActive() {
     if (typeof window.__bgZenLoaded === 'undefined') return false;
-    const mw = document.getElementById('main-window');
-    return !!mw && !mw.hasAttribute('bgzen-booted');
+    mainWindowEl = mainWindowEl || document.getElementById('main-window');
+    return !!mainWindowEl && !mainWindowEl.hasAttribute('bgzen-booted');
   }
 
   function updateButton() {
@@ -612,8 +637,8 @@
     const y = window.screenY + (window.outerHeight - estimateHeight) / 2;
     ct.panel.moveTo(x, y);
 
-    console.log(
-      '[NavBtn] ctrlTab grid:',
+    dlog(
+      'ctrlTab grid:',
       count,
       'previews →',
       cols,
@@ -828,7 +853,7 @@
                 resizePanel(ct);
               } catch (_) {}
 
-              console.log('[NavBtn] Discarded pinned tab:', tab.label);
+              dlog('Discarded pinned tab:', tab.label);
             })
             .catch((err) => {
               console.error('[NavBtn] Discard error:', err.message);
@@ -852,7 +877,7 @@
             window.gZenWorkspaces._emptyTab = null;
           }
           gBrowser.removeTab(tab);
-          console.log('[NavBtn] Closed tab:', tab.label);
+          dlog('Closed tab:', tab.label);
         }
       },
       true,
