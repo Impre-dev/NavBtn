@@ -43,89 +43,7 @@
   // ================================================================
   let clickSound = null;
 
-  // TRACE — journal d'enquête (bug fermeture middle-click : zombie tab +
-  // bouton pas mis à jour). Log l'état gBrowser à chaque événement clé.
-  // À RETIRER une fois la root cause identifiée.
-  function tr(tag, extra) {
-    const has = window.gBrowser && gBrowser.tabs;
-    const parts = [
-      tag,
-      'tabs=' + (has ? gBrowser.tabs.length : '?'),
-      'vis=' + (has ? gBrowser.visibleTabs.length : '?'),
-      'sel#' + (has && gBrowser.selectedTab ? gBrowser.selectedIndex : 'NULL'),
-      'selOK=' + (has && gBrowser.selectedTab ? gBrowser.selectedTab.isConnected : '?'),
-    ];
-    console.log('[NavBtn▶]', parts.join(' '), extra || '');
-  }
 
-  // TRACE PROFONDE — wrappers runtime du pipeline de fermeture natif.
-  // Objectif : capter la STACK de la première exception qui interrompt
-  // removeTab/_endRemoveTab (hypothèse : throw synchrone dans le switcher
-  // Zen via _blurTab / handleTabBeforeClose / onTabRemoved). À RETIRER.
-  function armCloseTrace() {
-    const gb = window.gBrowser;
-    if (!gb || gb.__navbtnCloseTrace) return;
-    gb.__navbtnCloseTrace = true;
-
-    const lbl = (t) => (t ? JSON.stringify(t.label.slice(0, 40)) : String(t));
-
-    const origRemove = gb.removeTab;
-    gb.removeTab = function (tab, params) {
-      console.log('[NavBtn▶] removeTab enter', lbl(tab), 'closing=' + !!tab.closing, 'linked=' + !!tab.linkedBrowser);
-      try {
-        const r = origRemove.call(this, tab, params);
-        console.log('[NavBtn▶] removeTab returned', lbl(tab), 'inTabs=' + gb.tabs.includes(tab), 'linked=' + !!tab.linkedBrowser);
-        return r;
-      } catch (e) {
-        console.error('[NavBtn▶] removeTab THREW', lbl(tab), e);
-        throw e;
-      }
-    };
-
-    const origEnd = gb._endRemoveTab;
-    gb._endRemoveTab = function (tab) {
-      console.log('[NavBtn▶] _endRemoveTab enter', lbl(tab));
-      try {
-        const r = origEnd.call(this, tab);
-        console.log('[NavBtn▶] _endRemoveTab done', lbl(tab), tab ? 'inTabs=' + gb.tabs.includes(tab) + ' linked=' + !!tab.linkedBrowser : '');
-        return r;
-      } catch (e) {
-        console.error('[NavBtn▶] _endRemoveTab THREW', lbl(tab), e);
-        throw e;
-      }
-    };
-
-    const origBlur = gb._blurTab;
-    gb._blurTab = function (tab) {
-      try {
-        const r = origBlur.call(this, tab);
-        console.log('[NavBtn▶] _blurTab ok →', lbl(gb.selectedTab));
-        return r;
-      } catch (e) {
-        console.error('[NavBtn▶] _blurTab THREW', lbl(tab), e);
-        throw e;
-      }
-    };
-
-    const ws = window.gZenWorkspaces;
-    if (ws && ws.handleTabBeforeClose && !ws.__navbtnCloseTrace) {
-      ws.__navbtnCloseTrace = true;
-      const origHtbc = ws.handleTabBeforeClose;
-      ws.handleTabBeforeClose = function (tab, cwwl) {
-        const r = origHtbc.call(this, tab, cwwl);
-        console.log('[NavBtn▶] handleTabBeforeClose', lbl(tab), '→ newTab:', lbl(r));
-        return r;
-      };
-    }
-
-    // Filet : stack complète de toute erreur switcher/linkedBrowser non-capturée.
-    window.addEventListener('error', (ev) => {
-      if (ev.message && /AsyncTabSwitcher|linkedBrowser|isRemoteBrowser/.test(ev.message)) {
-        console.error('[NavBtn▶] window error:', ev.message, '\nstack:', ev.error && ev.error.stack);
-      }
-    });
-    console.log('[NavBtn▶] close-trace armée (removeTab/_endRemoveTab/_blurTab/handleTabBeforeClose wrappés)');
-  }
 
   async function loadSound() {
     try {
@@ -168,7 +86,6 @@
     watchTabs();
     portSwitcher();
     loadSound();
-    armCloseTrace();
 
     // Armement de la pile : quand le session restore a fini (event dédié),
     // sinon la chorégraphie de démarrage polluerait la pile MRU (flash).
@@ -197,7 +114,7 @@
       },
     });
 
-    console.log('[NavBtn] v1.4.7 — bouton prêt, MRU armé au SSWindowRestored');
+    console.log('[NavBtn] v1.4.8 — bouton prêt, MRU armé au SSWindowRestored');
   }
 
   // ================================================================
@@ -223,7 +140,10 @@
 
   function targetTab() {
     for (const t of mru) {
-      if (t !== gBrowser.selectedTab && t.isConnected) return t;
+      // Miroir du filtre ctrlTab natif (browser-ctrlTab.js:261) : un onglet
+      // déchargé (discard / lazy restore → attribut "pending") n'est pas un
+      // "onglet ouvert" → jamais proposé comme cible du ping-pong.
+      if (t !== gBrowser.selectedTab && t.isConnected && !t.hasAttribute('pending')) return t;
     }
     return null;
   }
@@ -232,7 +152,6 @@
     const tc = gBrowser.tabContainer;
 
     tc.addEventListener('TabSelect', () => {
-      tr('TabSelect', '«' + (gBrowser.selectedTab ? gBrowser.selectedTab.label : '?').slice(0, 30) + '»');
       if (!mruArmed) return; // ignore la chorégraphie de démarrage
       const t = gBrowser.selectedTab;
       const i = mru.indexOf(t);
@@ -245,7 +164,6 @@
     // "Entrée disparaît" : le retrait à la fermeture fait remonter
     // naturellement vers l'onglet d'avant.
     tc.addEventListener('TabClose', (e) => {
-      tr('TabClose', '«' + (e.target.label || '').slice(0, 30) + '» pinned=' + e.target.pinned);
       if (!mruArmed) return;
       const i = mru.indexOf(e.target);
       if (i !== -1) mru.splice(i, 1);
@@ -329,16 +247,45 @@
         e.stopPropagation();
         playClick();
         const tab = gBrowser.selectedTab;
-        tr('BTN middle', '«' + (tab ? tab.label : '?').slice(0, 30) + '» pinned=' + !!(tab && tab.pinned) + ' ess=' + !!(tab && tab.hasAttribute('zen-essential')));
         // Épinglé/Essential : discard (unload mémoire, onglet conservé)
         // — même règle que le switcher ctrlTab, API officielle Zen
         if (tab.pinned || tab.hasAttribute('zen-essential')) {
           gBrowser.explicitUnloadTabs([tab])
-            .then(() => tr('BTN discard done', '«' + tab.label.slice(0, 30) + '» inTabs=' + gBrowser.tabs.includes(tab) + ' linked=' + !!tab.linkedBrowser))
+            // L'onglet passe "pending" → targetTab() l'exclut désormais :
+            // refresh pour que l'icône passe au suivant immédiatement.
+            .then(() => updateButton())
             .catch((err) => console.error('[NavBtn] Discard error:', err.message));
         } else {
+          // FIX blur-target : quand tous les autres onglets sont épinglés/
+          // essentiels (ou exclus du workspace), _findTabToBlurTo retourne
+          // null → l'onglet mourant RESTE sélectionné pendant tout le
+          // teardown → AsyncTabswitcher sur linkedBrowser=null → zombie +
+          // gestion d'onglets morte. Fallback natif Zen (selectEmptyTab),
+          // celui-là même que la pref shouldOpenNewTabIfLastUnpinnedTabIsClosed
+          // désactive (trou natif, reproductible aussi via le X d'onglet).
+          const blurTgt = gBrowser._findTabToBlurTo ? gBrowser._findTabToBlurTo(tab) : null;
+          if (!blurTgt || blurTgt === tab) {
+            try {
+              if (window.gZenWorkspaces && window.gZenWorkspaces.selectEmptyTab) {
+                window.gZenWorkspaces.selectEmptyTab();
+              }
+            } catch (e) {
+              console.warn('[NavBtn] selectEmptyTab fallback failed:', e.message);
+            }
+          }
+          // FIX empty-tab zombie (bug natif Zen) : makeSureEmptyTabIsFirst()
+          // (ZenSpaceManager:1702, appelé par _endRemoveTab:6330 via
+          // updateTabsContainers) re-insère this._emptyTab dans le strip via
+          // insertBefore() même s'il vient d'être détaché par aTab.remove() —
+          // son garde closing/isConnected n'est actif qu'en testingEnabled.
+          // Fermer l'empty tab lui-même → il RESUSCITE en zombie sans browser
+          // (position 0, linkedBrowser=null) → initialBrowser null →
+          // AsyncTabSwitcher throw → gestion d'onglets morte. On détache la
+          // référence avant removeTab pour empêcher la résurrection.
+          if (window.gZenWorkspaces && window.gZenWorkspaces._emptyTab === tab) {
+            window.gZenWorkspaces._emptyTab = null;
+          }
           gBrowser.removeTab(tab);
-          setTimeout(() => tr('BTN middle post-close', '«' + tab.label.slice(0, 30) + '» stillInTabs=' + gBrowser.tabs.includes(tab) + ' linked=' + !!tab.linkedBrowser), 0);
         }
         return;
       }
@@ -417,7 +364,6 @@
   function updateButton() {
     if (!btn) return;
     const t = targetTab();
-    tr('updateButton', 'tgt=«' + (t ? (t.label || '').slice(0, 25) : 'null') + '» cur=«' + (gBrowser.selectedTab ? (gBrowser.selectedTab.label || '').slice(0, 25) : '?') + '» mru=[' + mru.slice(0, 5).map((x) => (x.label || '').slice(0, 14)).join(' | ') + ']');
 
     // Auto-hide : invisible tant qu'aucun aller-retour n'est possible,
     // pendant le boot splash BG-Zen (notre z-index flotte au-dessus de lui),
@@ -882,6 +828,23 @@
               console.error('[NavBtn] Discard error:', err.message);
             });
         } else {
+          // FIX blur-target : idem BTN middle — l'onglet mourant ne doit
+          // jamais rester sélectionné pendant le teardown (trou natif Zen
+          // quand tous les autres onglets sont épinglés/essentiels).
+          const blurTgt = gBrowser._findTabToBlurTo ? gBrowser._findTabToBlurTo(tab) : null;
+          if (!blurTgt || blurTgt === tab) {
+            try {
+              if (window.gZenWorkspaces && window.gZenWorkspaces.selectEmptyTab) {
+                window.gZenWorkspaces.selectEmptyTab();
+              }
+            } catch (e) {
+              console.warn('[NavBtn] selectEmptyTab fallback failed:', e.message);
+            }
+          }
+          // FIX empty-tab zombie — même garde que le BTN middle (voir là-bas)
+          if (window.gZenWorkspaces && window.gZenWorkspaces._emptyTab === tab) {
+            window.gZenWorkspaces._emptyTab = null;
+          }
           gBrowser.removeTab(tab);
           console.log('[NavBtn] Closed tab:', tab.label);
         }
