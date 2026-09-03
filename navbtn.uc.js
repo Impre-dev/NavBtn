@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name           NavBtn
-// @version        1.4.5
+// @version        1.4.6
 // @description    Bouton overlay gamboy — clic gauche: onglet précédent (MRU ping-pong) · clic droit: switcher ctrlTab
 // @author         Impre
 // @include        main
@@ -112,7 +112,7 @@
       },
     });
 
-    console.log('[NavBtn] v1.4.5 — bouton prêt, MRU armé au SSWindowRestored');
+    console.log('[NavBtn] v1.4.6 — bouton prêt, MRU armé au SSWindowRestored');
   }
 
   // ================================================================
@@ -487,19 +487,24 @@
     const gap = 4;
     const avail = screen.availWidth * 0.95;
 
-    // Largeur item MESURÉE, plus estimée : le calcul théorique dérive
-    // (padding/border XUL du bouton, favicon…) et un track trop étroit
-    // fait déborder la dernière colonne sur le padding droit du panel.
-    // scrollWidth = largeur réelle du contenu du bouton (layout synchrone).
+    // Largeur item : ⚠ ne JAMAIS mesurer le bouton lui-même — grid-item
+    // étiré sur son track (justify-items: stretch par défaut), son
+    // scrollWidth ≥ clientWidth = track courant → à CHAQUE fermeture
+    // d'onglet itemW gonflait de +8 (cliquet), cols chutait, les rangées
+    // poussaient et le popup ne suivait pas (slot overflow:clip) →
+    // vignettes coupées en "fines bandes" + layout qui dérive. On mesure
+    // l'INNER (.ctrlTab-preview-inner) : enfant XUL d'un bouton
+    // pack=center, il garde sa largeur NATURELLE (canvas + padding +
+    // border ; le label a contain:inline-size → zéro contribution) —
+    // stable à l'ouverture comme après N fermetures. +8 : favicon natif
+    // débordant (margin-inline-end négatif). Floor théorique tant que
+    // le panel n'est pas layouté (mesure = 0).
     const grid = ensureGrid(ct);
-    let itemW = ct.canvasWidth + 14; // estimation de départ (padding inner)
+    let itemW = ct.canvasWidth + 20; // floor : canvas + 2×5 pad inner + 2×2 border + favicon
     if (grid) {
-      const fb = grid.querySelector('.ctrlTab-preview:not([hidden])');
-      if (fb) {
-        // Track = largeur RÉELLE du bouton : zéro slack, le canvas remplit
-        // son track. +8 couvre le favicon natif qui déborde à droite
-        // (margin-inline-end négatif, non compté par scrollWidth).
-        const w = Math.ceil(fb.scrollWidth) + 8;
+      const inner = grid.querySelector('.ctrlTab-preview:not([hidden]) > .ctrlTab-preview-inner');
+      if (inner) {
+        const w = Math.ceil(inner.getBoundingClientRect().width) + 8;
         if (w > itemW) itemW = w;
       }
     }
@@ -595,49 +600,20 @@
     // on recentre sur les vraies dimensions, les deux axes.
     ct.panel.addEventListener('popupshown', () => {
       neutralizeSlot(ct);
-      const r = ct.panel.getBoundingClientRect();
 
-      // DIAGNOSTIC géométrie complet (à retirer après calage) : panel vs
-      // grille vs showAll + slot shadow du panel → qui est la "barre
-      // grise" et où dérive le centrage.
+      // Recalage à l'ouverture : le panel est layouté ici → la mesure
+      // d'itemW (cf resizePanel) est fiable dès la 1re frame au lieu de
+      // démarrer sur le floor théorique et de "sauter" au 1er middle-click.
       try {
-        const g = document.getElementById('navbtn-ctrltab-grid');
-        const allC = ct.panel.querySelector('#ctrlTab-showAll-container');
-        const pv = document.getElementById('ctrlTab-previews');
-        if (g) {
-          const gr = g.getBoundingClientRect();
-          const ar = allC && allC.getBoundingClientRect();
-          const vr = pv && pv.getBoundingClientRect();
-          console.log(
-            '[NavBtn] géo: panel',
-            Math.round(r.width) + '×' + Math.round(r.height),
-            '@' + Math.round(r.x) + ',' + Math.round(r.y),
-            '| styleH',
-            ct.panel.style.height,
-            '| grille',
-            Math.round(gr.width) + '×' + Math.round(gr.height),
-            'Δ' + Math.round(gr.x - r.x) + ',' + Math.round(gr.y - r.y),
-            '| showAll',
-            ar ? Math.round(ar.width) + '×' + Math.round(ar.height) + ' Δ' + Math.round(ar.x - r.x) + ',' + Math.round(ar.y - r.y) : 'absent',
-            '| previews(caché)',
-            vr ? Math.round(vr.height) : '?',
-          );
-        }
-        const sr = ct.panel.openOrClosedShadowRoot;
-        if (sr) {
-          const slot = sr.querySelector('slot');
-          if (slot) {
-            const sc = getComputedStyle(slot);
-            console.log('[NavBtn] slot:', 'disp', sc.display, '| bg', sc.backgroundColor, '| h', sc.height, '| w', sc.width);
-          }
-        }
+        resizePanel(ct);
       } catch (e) {
-        console.warn('[NavBtn] géo diag:', e.message);
+        console.warn('[NavBtn] resize at shown:', e.message);
       }
 
-      // (Plus besoin de recalcul de hauteur : la grille in-flow
-      // dimensionne le panel naturellement.)
+      const r = ct.panel.getBoundingClientRect();
 
+      // Centrage exact sur les dimensions réelles (la grille in-flow
+      // dimensionne le panel naturellement — rien à recalculer).
       ct.panel.moveTo(window.screenX + (window.outerWidth - r.width) / 2, window.screenY + (window.outerHeight - r.height) / 2);
 
       // Wheel attaché UNIQUEMENT pendant l'ouverture (cf onWheel plus bas)
@@ -677,6 +653,73 @@
       e.stopPropagation();
       if (e.deltaY > 0) ct.advanceFocus(true);
       else ct.advanceFocus(false);
+    };
+
+    // --- PATCH updatePreview — garde anti double-résolution ---
+    // Course native (browser-ctrlTab.js:383) : quand on ferme vite, deux
+    // get() du MÊME tab sont en vol (updatePreviews ré-assigne les mêmes
+    // tabs aux mêmes previews) → le 1er remplace le placeholder, le 2e
+    // fait replaceChild(img, placeholder parti) → DOMException attrapée
+    // par le catch natif (bruit console + vignette figée). Le garde
+    // natif (switch sur _tab) protège contre un tab CHANGÉ, pas contre
+    // un doublon. Réimplémentation à l'identique + le garde manquant :
+    // si l'enfant capturé n'est plus dans le canvas → replaceChildren.
+    ct.updatePreview = function (aPreview, aTab) {
+      if (aPreview == this.showAllButton) return;
+
+      aPreview._tab = aTab;
+
+      if (!aTab) {
+        this._clearCanvas(aPreview._canvas);
+        aPreview.hidden = true;
+        aPreview._label.removeAttribute('value');
+        aPreview.removeAttribute('tooltiptext');
+        aPreview._favicon.removeAttribute('src');
+        return;
+      }
+
+      const canvas = aPreview._canvas;
+      const canvasWidth = this.canvasWidth;
+      const canvasHeight = this.canvasHeight;
+      let existingPreview = canvas.firstChild;
+      if (!existingPreview) {
+        const placeholder = document.createElement('img');
+        placeholder.className = 'ctrlTab-placeholder';
+        placeholder.setAttribute('width', canvasWidth);
+        placeholder.setAttribute('height', canvasHeight);
+        placeholder.setAttribute('alt', '');
+        canvas.appendChild(placeholder);
+        existingPreview = placeholder;
+      }
+      tabPreviews
+        .get(aTab)
+        .then((img) => {
+          if (aPreview._tab !== aTab) {
+            if (aPreview._tab === null) this._clearCanvas(canvas);
+            return;
+          }
+          if (img) {
+            img.style.width = canvasWidth + 'px';
+            img.style.height = canvasHeight + 'px';
+            if (existingPreview.parentNode === canvas) {
+              canvas.replaceChild(img, existingPreview);
+            } else {
+              // Doublon résolu en 2e : l'enfant capturé a déjà tourné —
+              // on repart propre, dernier résolu = dernier affiché.
+              canvas.replaceChildren(img);
+            }
+          }
+        })
+        .catch((error) => console.error(error));
+
+      aPreview._label.setAttribute('value', aTab.label);
+      aPreview.setAttribute('tooltiptext', aTab.label);
+      if (aTab.image) {
+        aPreview._favicon.setAttribute('src', aTab.image);
+      } else {
+        aPreview._favicon.removeAttribute('src');
+      }
+      aPreview.hidden = false;
     };
 
     // --- MIDDLE-CLICK — close/discard depuis les previews ---

@@ -242,9 +242,17 @@
    Le conteneur natif #ctrlTab-previews est masqué, plus besoin de CSS.) */
 
 /* Switcher — vignettes : padding intérieur natif 8px → 5px pour
-   resserrer l'ensemble (track = scrollWidth mesuré, cf resizePanel). */
+   resserrer l'ensemble (track mesuré sur l'inner, cf resizePanel). */
 #navbtn-ctrltab-grid .ctrlTab-preview-inner {
   padding: 5px;
+}
+
+/* Switcher — previews masqués : l'attribut hidden XUL n'est pas garanti
+   display:none dans notre div HTML display:grid (feuille UA XUL) →
+   cellules fantômes après fermeture middle-click. Élimination explicite,
+   quel que soit le comportement UA. */
+#navbtn-ctrltab-grid .ctrlTab-preview[hidden] {
+  display: none !important;
 }
 
 /* Switcher : le gris natif du panel (bg rgba(102,102,102,.85) sur le

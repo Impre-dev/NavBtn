@@ -3,7 +3,7 @@
   "name": "NavBtn",
   "description": "Bouton overlay gamboy — clic gauche : onglet précédent (MRU ping-pong), clic droit : switcher ctrlTab",
   "author": "Impre",
-  "version": "1.4.5",
+  "version": "1.4.6",
   "js": true,
   "scripts": {
     "navbtn.uc.js": {
