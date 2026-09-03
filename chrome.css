@@ -87,8 +87,6 @@
 .navbtn-fav {
   width: 20px;
   height: 20px;
-  border-radius: 4px;
-  background-color: var(--navbtn-fg);
   background-image: var(--navbtn-fav-img, none);
   background-size: contain;
   background-position: center;

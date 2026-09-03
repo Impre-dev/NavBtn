@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name           NavBtn
-// @version        1.2.0
+// @version        1.3.2
 // @description    Bouton overlay gamboy — clic gauche: onglet précédent (MRU ping-pong) · clic droit: switcher ctrlTab
 // @author         Impre
 // @include        main
@@ -80,7 +80,24 @@
     portSwitcher();
     loadSound();
 
-    console.log('[NavBtn] v1.0.0 — bouton prêt, MRU armé');
+    // Armement de la pile : quand le session restore a fini (event dédié),
+    // sinon la chorégraphie de démarrage polluerait la pile MRU (flash).
+    window.addEventListener('SSWindowRestored', armMru, { once: true });
+    // LAST RESORT: si le session restore est désactivé, SSWindowRestored ne
+    // tire jamais — aucun autre événement ne signale "fenêtre prête", donc
+    // timer de secours one-shot (idempotent, sans effet si déjà armé).
+    setTimeout(armMru, 3000);
+
+    // Coordination BG-Zen : le boot splash couvre toute l'UI et notre bouton
+    // (z-index max) flotte AU-DESSUS → masqué tant que le splash est actif.
+    // BG-Zen pose l'attribut bgzen-booted sur #main-window à la sortie.
+    // MutationObserver = event-driven, aucune polling.
+    new MutationObserver(() => updateButton()).observe(document.getElementById('main-window'), {
+      attributes: true,
+      attributeFilter: ['bgzen-booted'],
+    });
+
+    console.log('[NavBtn] v1.3.2 — bouton prêt, MRU armé au SSWindowRestored');
   }
 
   // ================================================================
@@ -89,6 +106,20 @@
   // ================================================================
   const MRU_CAP = 30;
   const mru = [];
+
+  // Anti-flash : la pile ne s'arme qu'une fois la fenêtre réellement prête.
+  // Pendant la chorégraphie de démarrage (session restore, switch de
+  // workspace Zen), des TabSelect transitoires créeraient une fausse cible
+  // → le bouton apparaît brièvement puis disparaît.
+  let mruArmed = false;
+
+  function armMru() {
+    if (mruArmed) return;
+    mruArmed = true;
+    // Seed avec l'onglet courant : pas de faux "précédent" au premier clic
+    if (gBrowser.selectedTab) mru.unshift(gBrowser.selectedTab);
+    updateButton();
+  }
 
   function targetTab() {
     for (const t of mru) {
@@ -101,6 +132,7 @@
     const tc = gBrowser.tabContainer;
 
     tc.addEventListener('TabSelect', () => {
+      if (!mruArmed) return; // ignore la chorégraphie de démarrage
       const t = gBrowser.selectedTab;
       const i = mru.indexOf(t);
       if (i !== -1) mru.splice(i, 1);
@@ -112,9 +144,15 @@
     // "Entrée disparaît" : le retrait à la fermeture fait remonter
     // naturellement vers l'onglet d'avant.
     tc.addEventListener('TabClose', (e) => {
+      if (!mruArmed) return;
       const i = mru.indexOf(e.target);
       if (i !== -1) mru.splice(i, 1);
       updateButton();
+      // Event-loop yield : laisse gBrowser.selectedTab basculer sur son
+      // successeur APRÈS la fermeture, puis recalcule. Sans ça, si le
+      // TabClose arrive avant le switch de sélection, targetTab() croit
+      // qu'un aller-retour existe encore (bouton bloqué visible).
+      setTimeout(updateButton, 0);
     });
 
     // Refresh favicon/label uniquement pour la cible courante
@@ -145,6 +183,9 @@
   function buildButton() {
     const wrap = document.createElement('div');
     wrap.id = 'navbtn-wrap';
+    // Anti-flash : caché dès la création, avant le premier append au DOM.
+    // Le premier updateButton() ne le révèle que si une cible existe VRAIMENT.
+    wrap.classList.add('navbtn-notarget');
     wrapEl = wrap;
 
     btn = document.createElement('div');
@@ -170,13 +211,37 @@
     wrap.style.right = offset + 'px';
     btn.style.height = size + 'px';
 
-    // Clic gauche → switch immédiat (pression + son pendant l'action)
+    // Clic gauche → switch immédiat · middle-click → close (ou discard si épinglé)
     btn.addEventListener('mousedown', (e) => {
+      if (e.button === 1) {
+        e.preventDefault();
+        e.stopPropagation();
+        playClick();
+        const tab = gBrowser.selectedTab;
+        // Épinglé/Essential : discard (unload mémoire, onglet conservé)
+        // — même règle que le switcher ctrlTab, API officielle Zen
+        if (tab.pinned || tab.hasAttribute('zen-essential')) {
+          gBrowser
+            .explicitUnloadTabs([tab])
+            .catch((err) => console.error('[NavBtn] Discard error:', err.message));
+        } else {
+          gBrowser.removeTab(tab);
+        }
+        return;
+      }
       if (e.button !== 0) return;
       e.preventDefault();
       e.stopPropagation();
       playClick();
       switchToPrevious();
+    });
+
+    // Sécurité : tuer l'auxclick middle (coller presse-papier, etc.)
+    btn.addEventListener('auxclick', (e) => {
+      if (e.button === 1) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
     });
 
     // Clic droit → switcher ctrlTab (et tuer le contextmenu natif)
@@ -202,14 +267,24 @@
     updateButton();
   }
 
+  // Splash BG-Zen actif ? (BG-Zen absent du profil → jamais actif)
+  function bootSplashActive() {
+    if (typeof window.__bgZenLoaded === 'undefined') return false;
+    const mw = document.getElementById('main-window');
+    return !!mw && !mw.hasAttribute('bgzen-booted');
+  }
+
   function updateButton() {
     if (!btn) return;
     const t = targetTab();
 
-    // Auto-hide : bouton invisible tant qu'aucun aller-retour n'est possible
-    // (toggle sur les mêmes events que le refresh — zéro mécanisme en plus)
+    // Auto-hide : invisible tant qu'aucun aller-retour n'est possible OU
+    // pendant le boot splash BG-Zen (notre z-index flotte au-dessus de lui)
     if (wrapEl) {
-      wrapEl.classList.toggle('navbtn-notarget', !t && pref.bool('navbtn.autoHide', true));
+      wrapEl.classList.toggle(
+        'navbtn-notarget',
+        (!t || bootSplashActive()) && pref.bool('navbtn.autoHide', true),
+      );
     }
 
     const showFav = pref.bool('navbtn.showFavicon', true);
