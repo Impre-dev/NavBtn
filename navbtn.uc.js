@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name           NavBtn
-// @version        1.4.10
+// @version        1.4.11
 // @description    Bouton overlay gamboy — clic gauche: onglet précédent (MRU ping-pong) · clic droit: switcher ctrlTab
 // @author         Impre
 // @include        main
@@ -13,11 +13,20 @@
   // PREFS (MCM — voir preferences.json)
   // ================================================================
   const pref = {
+    // MCM écrit les valeurs en prefs STRING (setStringPref) — Sine n'a pas de
+    // type "number" (voir preferences.sys.mjs). parseInt ici, avec fallback
+    // getIntPref pour une pref int posée manuellement en about:config.
     int(name, fallback) {
       try {
-        return Services.prefs.prefHasUserValue(name) ? Services.prefs.getIntPref(name) : fallback;
+        if (!Services.prefs.prefHasUserValue(name)) return fallback;
+        const n = parseInt(Services.prefs.getStringPref(name, ''), 10);
+        return Number.isFinite(n) ? n : fallback;
       } catch (_) {
-        return fallback;
+        try {
+          return Services.prefs.getIntPref(name);
+        } catch (_) {
+          return fallback;
+        }
       }
     },
     bool(name, fallback) {
@@ -121,7 +130,7 @@
       },
     });
 
-    console.log('[NavBtn] v1.4.10 — bouton prêt, MRU armé au SSWindowRestored');
+    console.log('[NavBtn] v1.4.11 — bouton prêt, MRU armé au SSWindowRestored');
   }
 
   // ================================================================
@@ -262,11 +271,15 @@
     wrap.appendChild(btn);
     document.documentElement.appendChild(wrap);
 
-    // Applique les prefs MCM (offset, size)
-    const offset = pref.int('navbtn.offset', 24);
+    // Applique les prefs MCM (offsetRight, offsetBottom, size).
+    // Migration : si l'ancienne pref unique navbtn.offset est posée, elle
+    // sert de fallback pour les deux axes tant que les nouvelles sont vides.
+    const legacyOffset = pref.int('navbtn.offset', 24);
+    const offsetRight = pref.int('navbtn.offsetRight', legacyOffset);
+    const offsetBottom = pref.int('navbtn.offsetBottom', legacyOffset);
     const size = pref.int('navbtn.size', 52);
-    wrap.style.bottom = offset + 'px';
-    wrap.style.right = offset + 'px';
+    wrap.style.bottom = offsetBottom + 'px';
+    wrap.style.right = offsetRight + 'px';
     btn.style.height = size + 'px';
 
     // Clic gauche → switch immédiat · middle-click → close (ou discard si épinglé)

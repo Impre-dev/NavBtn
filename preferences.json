@@ -1,14 +1,20 @@
 [
   {
-    "property": "navbtn.offset",
-    "label": "📏 Distance du bord de la fenêtre (px)",
-    "type": "number",
+    "property": "navbtn.offsetRight",
+    "label": "📏 Distance du bord DROIT (px)",
+    "type": "string",
+    "defaultValue": "24"
+  },
+  {
+    "property": "navbtn.offsetBottom",
+    "label": "📏 Distance du bord BAS (px)",
+    "type": "string",
     "defaultValue": "24"
   },
   {
     "property": "navbtn.size",
     "label": "📐 Hauteur du bouton (px)",
-    "type": "number",
+    "type": "string",
     "defaultValue": "52"
   },
   {
