@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name           NavBtn
-// @version        1.4.11
+// @version        1.4.12
 // @description    Bouton overlay gamboy — clic gauche: onglet précédent (MRU ping-pong) · clic droit: switcher ctrlTab
 // @author         Impre
 // @include        main
@@ -49,6 +49,63 @@
   // sérialisation + render). Les logs boot one-shot restent en direct.
   const DEBUG = false;
   const dlog = DEBUG ? console.log.bind(console, '[NavBtn]') : () => {};
+
+  // ================================================================
+  // TRACE — log fichier externalisé (pattern BG-Zen / bgzen-debug.log).
+  // Diagnostic du chaos middle-click dans le switcher ctrlTab.
+  // TRACE=false en prod. Écritures sérialisées (writeChain) + cap
+  // ~200 Ko glissante + tr blindé : le logging ne peut JAMAIS casser
+  // l'appelant. ⚠ append:true TRONQUE sur ce build Zen → read-append-write.
+  // ================================================================
+  const TRACE = true;
+  const TRACE_FILE = PathUtils.join(PathUtils.profileDir, 'chrome', 'sine-mods', 'navbtn', 'trace.log');
+  const WTAG = 'w' + Math.random().toString(36).slice(2, 5); // tag fenêtre
+  let writeChain = Promise.resolve();
+
+  async function appendTrace(line) {
+    let prev = '';
+    try { prev = await IOUtils.readUTF8(TRACE_FILE); } catch { /* 1er boot */ }
+    if (prev.length > 200 * 1024) {
+      const cut = prev.indexOf('\n', prev.length - 200 * 1024);
+      prev = cut >= 0 ? prev.slice(cut + 1) : prev.slice(-200 * 1024);
+    }
+    await IOUtils.writeUTF8(TRACE_FILE, prev + line + '\n');
+  }
+
+  function tr(...args) {
+    if (!TRACE) return;
+    try {
+      const t = new Date();
+      const p2 = (n) => String(n).padStart(2, '0');
+      const p3 = (n) => String(n).padStart(3, '0');
+      const ts = `${p2(t.getHours())}:${p2(t.getMinutes())}:${p2(t.getSeconds())}.${p3(t.getMilliseconds())}`;
+      const msg = args
+        .map((a) => {
+          if (a instanceof Error) return a.message;
+          if (typeof a === 'object' && a !== null) {
+            try { return JSON.stringify(a); } catch { return String(a); }
+          }
+          return String(a);
+        })
+        .join(' ');
+      writeChain = writeChain
+        .then(() => appendTrace(`[${WTAG}] ${ts} ${msg}`))
+        .catch((ex) => console.error('[NavBtn] trace write failed:', ex.message));
+    } catch (_) { /* jamais casser l'appelant */ }
+  }
+
+  // Identité compacte d'un tab pour les logs
+  function tabTag(tab) {
+    if (!tab) return 'null';
+    return (
+      `"${tab.label}"` +
+      (tab.pinned ? ' [pin]' : '') +
+      (tab.hasAttribute('zen-essential') ? ' [ess]' : '') +
+      (tab.hasAttribute('pending') ? ' [pending]' : '') +
+      (tab === gBrowser.selectedTab ? ' [SEL]' : '') +
+      (tab.isConnected ? '' : ' [DETACHED]')
+    );
+  }
 
   // ================================================================
   // SON — key.wav en feedback de pression
@@ -130,7 +187,14 @@
       },
     });
 
-    console.log('[NavBtn] v1.4.11 — bouton prêt, MRU armé au SSWindowRestored');
+    console.log('[NavBtn] v1.4.12 — bouton prêt, MRU armé au SSWindowRestored');
+    tr('=== BOOT NavBtn v1.4.12 — fenêtre', WTAG, '===');
+
+    // Sonde TabOpen : si des CustomTab apparaissent pendant que le panel
+    // est ouvert, on verra QUI les crée et dans quel ordre.
+    gBrowser.tabContainer.addEventListener('TabOpen', (e) => {
+      if (window.ctrlTab?.isOpen) tr('!! TabOpen PENDANT panel ouvert:', tabTag(e.target));
+    });
   }
 
   // ================================================================
@@ -650,16 +714,11 @@
     const y = window.screenY + (window.outerHeight - estimateHeight) / 2;
     ct.panel.moveTo(x, y);
 
-    dlog(
-      'ctrlTab grid:',
-      count,
-      'previews →',
-      cols,
-      'cols ×',
-      rows,
-      'rows, item',
-      Math.round(itemW) + 'px, panel',
-      Math.round(width) + 'px',
+    tr(
+      'resizePanel: count', count,
+      '→ cols', cols, '× rows', rows,
+      '· itemW', Math.round(itemW) + 'px (floor ' + (ct.canvasWidth + 20) + ')',
+      '· panel', Math.round(width) + 'px',
     );
   }
 
@@ -706,7 +765,16 @@
         resizePanel(ct);
       } catch (e) {
         console.warn('[NavBtn] resize at shown:', e.message);
+        tr('!! resize at shown a jeté:', e.message);
       }
+
+      tr(
+        'popupshown — tabCount', ct.tabCount,
+        '· previews:', ct.previews
+          .filter((p) => p._tab && p !== ct.showAllButton)
+          .map((p) => `"${p._tab.label}"`)
+          .join(' | '),
+      );
 
       const r = ct.panel.getBoundingClientRect();
 
@@ -794,6 +862,7 @@
         .then((img) => {
           if (aPreview._tab !== aTab) {
             if (aPreview._tab === null) this._clearCanvas(canvas);
+            tr('updatePreview stale: tab a changé pendant la résolution → skip');
             return;
           }
           if (img) {
@@ -804,6 +873,7 @@
             } else {
               // Doublon résolu en 2e : l'enfant capturé a déjà tourné —
               // on repart propre, dernier résolu = dernier affiché.
+              tr('updatePreview DOUBLON 2e résolution → replaceChildren, tab', `"${aTab.label}"`);
               canvas.replaceChildren(img);
             }
           }
@@ -825,9 +895,12 @@
     // (le natif appelle close() → on remplace par updatePreviews())
     const origRemoveClosing = ct.removeClosingTabFromUI.bind(ct);
     ct.removeClosingTabFromUI = function (aTab) {
+      tr('removeClosingTabFromUI — tabCount', this.tabCount, '· tab', tabTag(aTab));
       if (this.tabCount == 2) {
+        tr('→ branche tabCount==2 → updatePreviews()');
         this.updatePreviews();
       } else {
+        tr('→ branche native origRemoveClosing');
         origRemoveClosing(aTab);
       }
 
@@ -846,21 +919,30 @@
 
         e.preventDefault();
         e.stopImmediatePropagation();
+        tr('MM-DOWN dans panel — target:', e.target.className || e.target.tagName || e.target.nodeName);
 
         const preview = e.target.closest('.ctrlTab-preview');
-        if (!preview || !preview._tab) return;
+        if (!preview || !preview._tab) {
+          tr('MM-DOWN sans preview résoluble (preview:', !!preview, '· _tab:', preview?._tab?.label ?? 'null', ') → return');
+          return;
+        }
 
         const tab = preview._tab;
         const isPinned = tab.pinned || tab.hasAttribute('zen-essential');
+        tr('MM-DOWN →', tabTag(tab), '· isPinned:', isPinned);
 
         if (isPinned) {
           // Épinglé/Essential : discard (unload mémoire) via l'API officielle Zen
           gBrowser
             .explicitUnloadTabs([tab])
             .then(() => {
+              tr('discard résolu →', tabTag(tab));
+
               try {
                 ct.updatePreviews();
-              } catch (_) {}
+              } catch (err) {
+                tr('!! updatePreviews après discard a jeté:', err.message);
+              }
 
               try {
                 resizePanel(ct);
@@ -869,6 +951,7 @@
               dlog('Discarded pinned tab:', tab.label);
             })
             .catch((err) => {
+              tr('!! explicitUnloadTabs a rejeté:', err.message);
               console.error('[NavBtn] Discard error:', err.message);
             });
         } else {
@@ -876,7 +959,9 @@
           // jamais rester sélectionné pendant le teardown (trou natif Zen
           // quand tous les autres onglets sont épinglés/essentiels).
           const blurTgt = gBrowser._findTabToBlurTo ? gBrowser._findTabToBlurTo(tab) : null;
+          tr('blurTgt:', tabTag(blurTgt));
           if (!blurTgt || blurTgt === tab) {
+            tr('!! blur-target ABSENT → selectEmptyTab fallback (CRÉE un onglet)');
             try {
               if (window.gZenWorkspaces && window.gZenWorkspaces.selectEmptyTab) {
                 window.gZenWorkspaces.selectEmptyTab();
@@ -887,8 +972,10 @@
           }
           // FIX empty-tab zombie — même garde que le BTN middle (voir là-bas)
           if (window.gZenWorkspaces && window.gZenWorkspaces._emptyTab === tab) {
+            tr('!! garde zombie: le tab fermé ÉTAIT _emptyTab → null');
             window.gZenWorkspaces._emptyTab = null;
           }
+          tr('removeTab →', tabTag(tab));
           gBrowser.removeTab(tab);
           dlog('Closed tab:', tab.label);
         }
@@ -914,6 +1001,7 @@
   // Ouvrir le switcher instantanément (bypass du délai natif 200ms)
   // ================================================================
   function openInstant(ct) {
+    tr('openInstant — isOpen:', ct.isOpen, '· _timer pending:', !!ct._timer);
     // open() calcule canvasWidth = écran*0.85/maxTabPreviews → vignettes
     // minuscules avec notre cap de 12. Et si on re-rendait après coup,
     // les DEUX batches de thumbnails async se battraient (le dernier
