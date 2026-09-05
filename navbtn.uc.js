@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name           NavBtn
-// @version        1.4.12
+// @version        1.4.13
 // @description    Bouton overlay gamboy — clic gauche: onglet précédent (MRU ping-pong) · clic droit: switcher ctrlTab
 // @author         Impre
 // @include        main
@@ -187,8 +187,8 @@
       },
     });
 
-    console.log('[NavBtn] v1.4.12 — bouton prêt, MRU armé au SSWindowRestored');
-    tr('=== BOOT NavBtn v1.4.12 — fenêtre', WTAG, '===');
+    console.log('[NavBtn] v1.4.13 — bouton prêt, MRU armé au SSWindowRestored');
+    tr('=== BOOT NavBtn v1.4.13 — fenêtre', WTAG, '===');
 
     // Sonde TabOpen : si des CustomTab apparaissent pendant que le panel
     // est ouvert, on verra QUI les crée et dans quel ordre.
@@ -955,19 +955,24 @@
               console.error('[NavBtn] Discard error:', err.message);
             });
         } else {
-          // FIX blur-target : idem BTN middle — l'onglet mourant ne doit
-          // jamais rester sélectionné pendant le teardown (trou natif Zen
-          // quand tous les autres onglets sont épinglés/essentiels).
-          const blurTgt = gBrowser._findTabToBlurTo ? gBrowser._findTabToBlurTo(tab) : null;
-          tr('blurTgt:', tabTag(blurTgt));
-          if (!blurTgt || blurTgt === tab) {
-            tr('!! blur-target ABSENT → selectEmptyTab fallback (CRÉE un onglet)');
-            try {
-              if (window.gZenWorkspaces && window.gZenWorkspaces.selectEmptyTab) {
-                window.gZenWorkspaces.selectEmptyTab();
+          // FIX v1.4.13 — le rituel blur-target n'a de sens QUE si le tab
+          // fermé est le SÉLECTIONNÉ (dans le switcher on ferme presque
+          // toujours un tab de fond). _findTabToBlurTo() renvoie null pour
+          // un non-sélectionné → l'ancien code déclenchait selectEmptyTab()
+          // à CHAQUE close → un CustomTab créé par fermeture (vignettes
+          // dupliquées + onglets en boucle, cf trace.log v1.4.12).
+          if (tab === gBrowser.selectedTab) {
+            const blurTgt = gBrowser._findTabToBlurTo ? gBrowser._findTabToBlurTo(tab) : null;
+            tr('blurTgt (tab sélectionné):', tabTag(blurTgt));
+            if (!blurTgt || blurTgt === tab) {
+              tr('!! blur-target ABSENT → selectEmptyTab fallback (CRÉE un onglet)');
+              try {
+                if (window.gZenWorkspaces && window.gZenWorkspaces.selectEmptyTab) {
+                  window.gZenWorkspaces.selectEmptyTab();
+                }
+              } catch (e) {
+                console.warn('[NavBtn] selectEmptyTab fallback failed:', e.message);
               }
-            } catch (e) {
-              console.warn('[NavBtn] selectEmptyTab fallback failed:', e.message);
             }
           }
           // FIX empty-tab zombie — même garde que le BTN middle (voir là-bas)
