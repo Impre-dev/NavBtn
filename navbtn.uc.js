@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name           NavBtn
-// @version        1.4.13
+// @version        1.4.14
 // @description    Bouton overlay gamboy — clic gauche: onglet précédent (MRU ping-pong) · clic droit: switcher ctrlTab
 // @author         Impre
 // @include        main
@@ -157,7 +157,15 @@
 
     buildButton();
     watchTabs();
-    portSwitcher();
+    // Le portage switcher touche aux internals natifs de ctrlTab : une maj
+    // Zen peut les casser (v1.4.13 : maxTabPreviews devenu getter-only →
+    // TypeError → init mort → bouton invisible). Le switcher est du
+    // cosmétique : un crash ici ne doit JAMAIS tuer le bouton MRU de base.
+    try {
+      portSwitcher();
+    } catch (e) {
+      console.error('[NavBtn] switcher patch failed (maj Zen ?) — bouton MRU reste opérationnel :', e);
+    }
     loadSound();
 
     // Armement de la pile : quand le session restore a fini (event dédié),
@@ -187,8 +195,8 @@
       },
     });
 
-    console.log('[NavBtn] v1.4.13 — bouton prêt, MRU armé au SSWindowRestored');
-    tr('=== BOOT NavBtn v1.4.13 — fenêtre', WTAG, '===');
+    console.log('[NavBtn] v1.4.14 — bouton prêt, MRU armé au SSWindowRestored');
+    tr('=== BOOT NavBtn v1.4.14 — fenêtre', WTAG, '===');
 
     // Sonde TabOpen : si des CustomTab apparaissent pendant que le panel
     // est ouvert, on verra QUI les crée et dans quel ordre.
@@ -726,6 +734,29 @@
     return e.code === 'Numpad1' && e.ctrlKey && e.altKey;
   }
 
+  // ================================================================
+  // Zen 1.22b : maxTabPreviews est devenu un getter-only natif →
+  // l'assignation directe throw en strict mode. Cascade : assignation,
+  // puis defineProperty (shadow d'une prop propre sur l'instance),
+  // puis dégradation propre (cap natif conservé, la grille reste
+  // utilisable avec 7 previews).
+  // ================================================================
+  function setMaxTabPreviews(ct, n) {
+    try {
+      ct.maxTabPreviews = n;
+      return;
+    } catch (_) { /* getter-only — tenter le shadow */ }
+    try {
+      Object.defineProperty(ct, 'maxTabPreviews', {
+        value: n,
+        writable: true,
+        configurable: true,
+      });
+      return;
+    } catch (_) { /* immuable — dégradation */ }
+    console.warn('[NavBtn] maxTabPreviews immuable sur ce build — cap natif conservé');
+  }
+
   function portSwitcher() {
     const ct = window.ctrlTab;
 
@@ -735,7 +766,7 @@
     // les boutons) → si ctrlTab.init() l'a déjà touché au boot, monter
     // maxTabPreviews ne change rien. On gère les 2 cas : lever le cap,
     // puis étendre le cache existant à la main via _makePreview() natif.
-    ct.maxTabPreviews = MAX_TAB_PREVIEWS;
+    setMaxTabPreviews(ct, MAX_TAB_PREVIEWS);
     const host = document.getElementById('navbtn-ctrltab-grid') || document.getElementById('ctrlTab-previews');
     const previewsArr = ct.previews; // crée 12 si vierge, sinon le cache 7
     if (previewsArr.length - 1 < MAX_TAB_PREVIEWS && host) {
@@ -1014,9 +1045,9 @@
     // d'open() (taille vignette "grand écran", rendu unique), puis
     // restauration immédiate pour tabPreviewCount.
     const cap = ct.maxTabPreviews;
-    ct.maxTabPreviews = 7;
+    setMaxTabPreviews(ct, 7);
     ct.open();
-    ct.maxTabPreviews = cap;
+    setMaxTabPreviews(ct, cap);
     if (ct._timer) {
       clearTimeout(ct._timer);
       ct._timer = null;
