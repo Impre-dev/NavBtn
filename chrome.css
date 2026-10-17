@@ -25,6 +25,7 @@
 }
 
 #navbtn {
+  opacity: 0.98;
   pointer-events: auto;
   cursor: pointer;
   -moz-user-select: none;
