@@ -1,7 +1,8 @@
 /* ================================================================
    NavBtn — bouton overlay gamboy (pression au clic)
    Langage visuel : border 2px + hard shadow + radius asymétrique
-   Couleurs branchées sur les variables de thème Zen (light/dark auto)
+   Couleurs épinglées en dur (look gameboy permanent — dissociation
+   du schéma UI, 27/10 : avant, elles suivaient la toolbar/thème)
    ================================================================ */
 
 #navbtn-wrap {
@@ -31,8 +32,12 @@
   -moz-user-select: none;
   user-select: none;
 
-  --navbtn-bg: var(--toolbar-bgcolor, #ffffff);
-  --navbtn-fg: var(--toolbar-color, #1b1b1b);
+  /* Valeurs en dur (dissociation 27/10) : les vars toolbar natives sont des
+     couleurs concrètes recalculées selon le schéma UI → le bouton changeait de
+     look avec le thème. Épinglées au relevé de l'opérateur (fond #FBFBFB,
+     ombre #BEB7BE), il ne suit plus que lui-même. */
+  --navbtn-bg: #fbfbfb;
+  --navbtn-fg: #beb7be;
 
   background: var(--navbtn-bg);
   height: 52px;

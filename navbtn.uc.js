@@ -617,9 +617,10 @@
       backdropFilter: 'blur(32px) saturate(140%)',
     });
     // below : fond opaque qui assure la lisibilité derrière le blur
+    // Dark-fixe (dissociation 27/10) : suit la page épinglée dark, pas le schéma UI
     const below = mk('navbtn-ctrltab-blur-below', {
       pointerEvents: 'none',
-      backgroundColor: 'light-dark(rgb(200 200 200 / 100%), rgb(20 20 20 / 100%))',
+      backgroundColor: 'rgb(20 20 20 / 100%)',
     });
 
     let raf = 0;
