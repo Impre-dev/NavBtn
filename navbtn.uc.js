@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name           NavBtn
-// @version        1.4.16
+// @version        1.4.17
 // @description    Bouton overlay gamboy — clic gauche: onglet précédent (MRU ping-pong) · clic droit: switcher ctrlTab
 // @author         Impre
 // @include        main
@@ -768,6 +768,38 @@
     // maxTabPreviews ne change rien. On gère les 2 cas : lever le cap,
     // puis étendre le cache existant à la main via _makePreview() natif.
     setMaxTabPreviews(ct, MAX_TAB_PREVIEWS);
+
+    // --- TRI PAR ORDRE — panel listé selon la tabbar, pas par récence ---
+    // Le natif trie _recentlyUsedTabs par lastAccessed (MRU). On surcharge
+    // la source de vérité de l'affichage (tabList, lue par open()/
+    // updatePreviews/tabCount) : gBrowser.tabs est déjà dans l'ordre tabbar.
+    // Filtres reproduits du natif 1.24b : closing/hidden/zen-empty-tab
+    // (_initRecentlyUsedTabs) + filtre pending Zen (pref
+    // zen.ctrlTab.show-pending-tabs, lue à chaque accès → pref live).
+    // La pile MRU interne continue de tourner côté natif — sans effet :
+    // plus personne ne la lit pour l'affichage. Le ping-pong du clic
+    // gauche du bouton utilise sa PROPRE pile → inchangé.
+    // NB: la pref native browser.ctrlTab.sortByRecentlyUsed=false NE
+    // PAS être utilisée : en 1.24b elle null-ise _recentlyUsedTabs et le
+    // getter tabList Zen jette (null.filter) — cf. roadmap.
+    try {
+      Object.defineProperty(ct, 'tabList', {
+        get() {
+          const canShowPending = Services.prefs.getBoolPref('zen.ctrlTab.show-pending-tabs', false);
+          return gBrowser.tabs.filter(
+            (tab) =>
+              !tab.closing &&
+              !tab.hidden &&
+              !tab.hasAttribute('zen-empty-tab') &&
+              (!tab.hasAttribute('pending') || canShowPending),
+          );
+        },
+        configurable: true,
+      });
+    } catch (e) {
+      console.warn('[NavBtn] surcharge tabList impossible (maj Zen ?) — tri MRU natif conservé:', e.message);
+    }
+
     const host = document.getElementById('navbtn-ctrltab-grid') || document.getElementById('ctrlTab-previews');
     const previewsArr = ct.previews; // crée 12 si vierge, sinon le cache 7
     if (previewsArr.length - 1 < MAX_TAB_PREVIEWS && host) {
@@ -1053,6 +1085,13 @@
       const cap = ct.maxTabPreviews;
       setMaxTabPreviews(ct, 7);
       ct.open();
+      // Tri par ordre : sélection initiale = l'onglet COURANT (lui-même),
+      // pas "le suivant" (comportement MRU du _selectedIndex=1 natif).
+      // Placé avant la restauration du cap : le clamp doit refléter les
+      // previews tels que open() vient de les rendre (cap 7). setupGUI
+      // (popupshown → panel helper) focus ce preview à l'ouverture.
+      const idx = ct.tabList.indexOf(gBrowser.selectedTab);
+      if (idx >= 0) ct._selectedIndex = Math.min(idx, ct.tabPreviewCount - 1);
       setMaxTabPreviews(ct, cap);
       if (ct._timer) {
         clearTimeout(ct._timer);
