@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name           NavBtn
-// @version        1.4.17
+// @version        1.4.18
 // @description    Bouton overlay gamboy — clic gauche: onglet précédent (MRU ping-pong) · clic droit: switcher ctrlTab
 // @author         Impre
 // @include        main
@@ -760,6 +760,20 @@
 
   function portSwitcher() {
     const ct = window.ctrlTab;
+
+    // Marge d'ombre du popup : Zen pose --panel-box-shadow-margin: 8px
+    // (zen-popup.css) → la règle UA ::part(content) plafonne le contenu à
+    // fenêtre − 16px (max-width round(up, 100% − 2×margin)) + overflow:clip
+    // → notre grille (gridW + padding, cf resizePanel) débordait du plafond
+    // → bordure de sélection du dernier item d'une rangée clippée (latent
+    // depuis toujours, révélé par v1.4.17 : la sélection sur le courant
+    // peut être la DERNIÈRE vignette, l'ancien MRU mettait toujours la
+    // sélection en 2e position). L'ombre native est déjà off sur CE panel
+    // (-moz-window-shadow: none natif + slot box-shadow:none) → la marge
+    // ne sert à rien ici → 0 = content à 100% de la fenêtre, plus de
+    // plafond. Cause confirmée au devtool par l'opérateur (round 15px =
+    // même effet, preuve du plafond).
+    ct.panel.style.setProperty('--panel-box-shadow-margin', '0');
 
     // Le cap natif (7 previews) était dimensionné pour une ligne unique.
     // Notre grille permet plus. ⚠ Piège natif : le getter previews() se
