@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name           NavBtn
-// @version        1.4.14
+// @version        1.4.16
 // @description    Bouton overlay gamboy — clic gauche: onglet précédent (MRU ping-pong) · clic droit: switcher ctrlTab
 // @author         Impre
 // @include        main
@@ -868,7 +868,8 @@
       aPreview._tab = aTab;
 
       if (!aTab) {
-        this._clearCanvas(aPreview._canvas);
+        // 1.24b : _clearCanvas n'existe plus → replaceChildren direct (miroir natif)
+        aPreview._canvas.replaceChildren();
         aPreview.hidden = true;
         aPreview._label.removeAttribute('value');
         aPreview.removeAttribute('tooltiptext');
@@ -893,7 +894,7 @@
         .get(aTab)
         .then((img) => {
           if (aPreview._tab !== aTab) {
-            if (aPreview._tab === null) this._clearCanvas(canvas);
+            if (aPreview._tab === null) canvas.replaceChildren();
             tr('updatePreview stale: tab a changé pendant la résolution → skip');
             return;
           }
@@ -1045,17 +1046,24 @@
     // résolu gagne) → tailles mixtes. Dance propre : cap à 7 le temps
     // d'open() (taille vignette "grand écran", rendu unique), puis
     // restauration immédiate pour tabPreviewCount.
-    const cap = ct.maxTabPreviews;
-    setMaxTabPreviews(ct, 7);
-    ct.open();
-    setMaxTabPreviews(ct, cap);
-    if (ct._timer) {
-      clearTimeout(ct._timer);
-      ct._timer = null;
-      ct._openPanel();
-      // _openPanel pose la largeur native mono-ligne → on repasse
-      // en grille responsive immédiatement (même frame, pas de flash)
-      resizePanel(ct);
+    // Try-catch : un internal natif renommé par une maj Zen (ex: 1.24b
+    // a tué _clearCanvas) jetait ici en silence → clic droit mort sans
+    // aucune trace. Loggué dans trace.log, le diagnostic est immédiat.
+    try {
+      const cap = ct.maxTabPreviews;
+      setMaxTabPreviews(ct, 7);
+      ct.open();
+      setMaxTabPreviews(ct, cap);
+      if (ct._timer) {
+        clearTimeout(ct._timer);
+        ct._timer = null;
+        ct._openPanel();
+        // _openPanel pose la largeur native mono-ligne → on repasse
+        // en grille responsive immédiatement (même frame, pas de flash)
+        resizePanel(ct);
+      }
+    } catch (e) {
+      tr('!! openInstant a jeté:', e.message, '·', (e.stack || '').split('\n')[1] || '');
     }
   }
 
